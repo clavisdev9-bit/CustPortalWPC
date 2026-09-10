@@ -1,0 +1,13 @@
+{
+  "name": "Customer Self-Service Portal WPC",
+  "short_name": "CustPortalWPC",
+  "description": "Self-service portal for quotations, orders, invoices, deliveries, tickets and more, backed by Odoo.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f5f6f8",
+  "theme_color": "#2f6fed",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

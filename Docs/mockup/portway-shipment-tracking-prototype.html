@@ -1,0 +1,1316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Portway — Shipment Tracking</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --navy:#0B1B33;
+    --navy-soft:#152947;
+    --blue:#2F6FED;
+    --blue-tint:#EAF0FE;
+    --bg:#F7F9FC;
+    --card:#FFFFFF;
+    --border:#E3E8F0;
+    --text:#0E1B2E;
+    --text-muted:#5B6B82;
+    --text-faint:#8B99AC;
+    --status-transit:#2F6FED;
+    --status-transit-bg:#EAF0FE;
+    --status-delivered:#16875A;
+    --status-delivered-bg:#E4F6EE;
+    --status-arriving:#C2600C;
+    --status-arriving-bg:#FDF0E2;
+    --status-delayed:#C63B3B;
+    --status-delayed-bg:#FBEAEA;
+    --status-cancelled:#5B6B82;
+    --status-cancelled-bg:#EEF1F5;
+    --radius:10px;
+    --shadow:0 1px 2px rgba(11,27,51,0.06), 0 1px 1px rgba(11,27,51,0.04);
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    font-family:'IBM Plex Sans', sans-serif;
+    background:var(--bg);
+    color:var(--text);
+    -webkit-font-smoothing:antialiased;
+  }
+  .mono{font-family:'IBM Plex Mono', monospace;}
+  button{font-family:inherit;}
+  a{color:inherit;}
+  :focus-visible{outline:2px solid var(--blue); outline-offset:2px;}
+
+  /* ---------- Header ---------- */
+  .app-header{
+    background:var(--navy);
+    color:#fff;
+    padding:0 24px;
+    height:60px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+  }
+  .app-header .brand{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    font-weight:600;
+    font-size:16px;
+    letter-spacing:0.2px;
+  }
+  .brand .mark{
+    width:26px;height:26px;border-radius:7px;
+    background:var(--blue);
+    display:flex;align-items:center;justify-content:center;
+    font-size:13px;font-weight:700;
+  }
+  .app-header nav{
+    display:flex;gap:24px;
+    font-size:13.5px;
+    color:#A9B7CE;
+  }
+  .app-header nav span.active{color:#fff;font-weight:600;}
+  .app-header .user-pill{
+    width:32px;height:32px;border-radius:50%;
+    background:var(--navy-soft);
+    border:1px solid rgba(255,255,255,0.15);
+    display:flex;align-items:center;justify-content:center;
+    font-size:12px;font-weight:600;
+  }
+
+  .app-body{ max-width:1240px; margin:0 auto; padding:24px 24px 64px; }
+
+  /* ---------- Breadcrumb / page title ---------- */
+  .breadcrumb{
+    font-size:13px; color:var(--text-muted); margin-bottom:6px;
+    display:flex; align-items:center; gap:6px;
+  }
+  .breadcrumb .crumb-link{
+    color:var(--blue); cursor:pointer; font-weight:500;
+  }
+  .breadcrumb .crumb-link:hover{ text-decoration:underline; }
+  .page-title{
+    font-size:22px; font-weight:600; margin:0 0 20px 0; letter-spacing:-0.2px;
+  }
+
+  /* ---------- KPI cards ---------- */
+  .kpi-row{
+    display:grid;
+    grid-template-columns:repeat(5,1fr);
+    gap:14px;
+    margin-bottom:20px;
+  }
+  .kpi-card{
+    background:var(--card);
+    border:1.5px solid var(--border);
+    border-radius:var(--radius);
+    padding:16px 16px;
+    cursor:pointer;
+    text-align:left;
+    transition:border-color .15s ease, box-shadow .15s ease, transform .1s ease;
+    box-shadow:var(--shadow);
+  }
+  .kpi-card:hover{ border-color:#C7D3E3; }
+  .kpi-card:active{ transform:translateY(1px); }
+  .kpi-card .kpi-label{
+    font-size:12.5px; color:var(--text-muted); margin-bottom:8px;
+    display:flex;align-items:center;gap:7px;
+  }
+  .kpi-card .dot{width:8px;height:8px;border-radius:50%;flex:none;}
+  .kpi-card .kpi-value{ font-size:26px; font-weight:600; font-family:'IBM Plex Mono',monospace; }
+  .kpi-card.active{
+    border-color:var(--blue);
+    background:var(--blue-tint);
+    box-shadow:0 0 0 3px rgba(47,111,237,0.12);
+  }
+  .kpi-card.active .kpi-value{ color:var(--blue); }
+
+  /* ---------- Panel: search + filters ---------- */
+  .panel{
+    background:var(--card);
+    border:1.5px solid var(--border);
+    border-radius:var(--radius);
+    padding:16px;
+    margin-bottom:16px;
+    box-shadow:var(--shadow);
+  }
+  .panel-row{ display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; }
+  .field{ display:flex; flex-direction:column; gap:6px; }
+  .field label{ font-size:12px; color:var(--text-muted); font-weight:500; }
+  .field input, .field select{
+    border:1.5px solid var(--border);
+    border-radius:8px;
+    padding:8px 10px;
+    font-size:13.5px;
+    background:#fff;
+    color:var(--text);
+    min-width:170px;
+  }
+  .field input:focus, .field select:focus{ border-color:var(--blue); }
+  .btn{
+    border-radius:8px;
+    padding:8px 14px;
+    font-size:13.5px;
+    font-weight:600;
+    border:1.5px solid transparent;
+    cursor:pointer;
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    transition:background .12s ease, border-color .12s ease, transform .06s ease;
+    white-space:nowrap;
+  }
+  .btn:active{ transform:translateY(1px); }
+  .btn-primary{ background:var(--blue); color:#fff; }
+  .btn-primary:hover{ background:#2A63D6; }
+  .btn-secondary{ background:#fff; color:var(--text); border-color:var(--border); }
+  .btn-secondary:hover{ border-color:#C7D3E3; background:#FAFBFD; }
+  .btn-ghost{ background:transparent; color:var(--text-muted); }
+  .btn-ghost:hover{ color:var(--text); background:#F1F4F8; }
+  .btn:disabled{ opacity:.4; cursor:not-allowed; }
+  .btn:disabled:hover{ background:inherit; }
+
+  .chip-row{ display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+  .chip{
+    background:var(--blue-tint); color:var(--blue);
+    border-radius:999px; padding:5px 8px 5px 12px;
+    font-size:12.5px; font-weight:500;
+    display:flex; align-items:center; gap:6px;
+  }
+  .chip button{
+    border:none; background:transparent; color:var(--blue);
+    cursor:pointer; font-size:14px; line-height:1; padding:2px;
+    border-radius:50%;
+  }
+  .chip button:hover{ background:rgba(47,111,237,0.15); }
+
+  /* Advanced filter drawer */
+  .drawer-overlay{
+    position:fixed; inset:0; background:rgba(11,27,51,0.35);
+    display:none; z-index:40;
+  }
+  .drawer-overlay.open{ display:block; }
+  .drawer{
+    position:fixed; top:0; right:0; height:100%; width:340px;
+    background:#fff; box-shadow:-8px 0 24px rgba(11,27,51,0.12);
+    padding:20px; z-index:41;
+    transform:translateX(100%);
+    transition:transform .2s ease;
+    display:flex; flex-direction:column;
+  }
+  .drawer.open{ transform:translateX(0); }
+  .drawer h3{ margin:0 0 16px 0; font-size:16px; }
+  .drawer .field{ margin-bottom:14px; }
+  .drawer .field input, .drawer .field select{ width:100%; min-width:0; }
+  .drawer-actions{ margin-top:auto; display:flex; gap:10px; padding-top:16px; border-top:1px solid var(--border); }
+
+  /* ---------- Table toolbar ---------- */
+  .table-card{
+    background:var(--card); border:1.5px solid var(--border); border-radius:var(--radius);
+    box-shadow:var(--shadow); overflow:visible;
+  }
+  .toolbar{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:14px 16px; border-bottom:1px solid var(--border);
+    gap:12px; flex-wrap:wrap;
+  }
+  .toolbar-left{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .search-box{ position:relative; }
+  .search-box input{
+    padding:8px 10px 8px 30px; border:1.5px solid var(--border); border-radius:8px;
+    font-size:13.5px; width:220px;
+  }
+  .search-box svg{ position:absolute; left:9px; top:50%; transform:translateY(-50%); opacity:.5; }
+  .popover-wrap{ position:relative; display:inline-block; }
+  .popover{
+    position:absolute; top:calc(100% + 6px); right:0;
+    background:#fff; border:1px solid var(--border); border-radius:10px;
+    box-shadow:0 8px 24px rgba(11,27,51,0.14);
+    padding:10px; z-index:30; width:210px; display:none;
+  }
+  .popover.open{ display:block; }
+  .popover label{
+    display:flex; align-items:center; gap:8px; font-size:13px; padding:6px 4px;
+    border-radius:6px; cursor:pointer;
+  }
+  .popover label:hover{ background:#F4F7FB; }
+
+  table{ width:100%; border-collapse:collapse; font-size:13.5px; }
+  thead th{
+    text-align:left; padding:10px 14px; color:var(--text-muted); font-weight:600;
+    font-size:12px; text-transform:none; border-bottom:1px solid var(--border);
+    cursor:pointer; -webkit-user-select:none; user-select:none; white-space:nowrap;
+    background:#FBFCFE;
+  }
+  thead th:hover{ color:var(--text); }
+  thead th .th-inner{ display:inline-flex; align-items:center; gap:5px; }
+  thead th .arrow{ opacity:.3; font-size:10px; }
+  thead th.sorted .arrow{ opacity:1; color:var(--blue); }
+  tbody tr{ border-bottom:1px solid var(--border); cursor:pointer; transition:background .1s ease; }
+  tbody tr:hover{ background:#F7FAFF; }
+  tbody tr:active{ background:#EFF4FE; }
+  tbody tr:last-child{ border-bottom:none; }
+  tbody td{ padding:12px 14px; vertical-align:middle; color:var(--text); }
+  td.mono, th .mono{ font-family:'IBM Plex Mono',monospace; }
+  td.muted{ color:var(--text-faint); font-style:italic; font-size:12.5px; }
+
+  .status-badge{
+    display:inline-flex; align-items:center; gap:6px;
+    padding:4px 10px; border-radius:999px; font-size:12px; font-weight:600;
+  }
+  .status-badge .dot{ width:6px;height:6px;border-radius:50%; }
+  .status-transit{ background:var(--status-transit-bg); color:var(--status-transit); }
+  .status-delivered{ background:var(--status-delivered-bg); color:var(--status-delivered); }
+  .status-arriving{ background:var(--status-arriving-bg); color:var(--status-arriving); }
+  .status-delayed{ background:var(--status-delayed-bg); color:var(--status-delayed); }
+  .status-cancelled{ background:var(--status-cancelled-bg); color:var(--status-cancelled); }
+
+  .icon-btn{
+    width:30px; height:30px; border-radius:7px; border:1.5px solid var(--border);
+    background:#fff; display:inline-flex; align-items:center; justify-content:center;
+    cursor:pointer; color:var(--text-muted);
+  }
+  .icon-btn:hover{ border-color:var(--blue); color:var(--blue); background:var(--blue-tint); }
+
+  .table-footer{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:12px 16px; border-top:1px solid var(--border); font-size:13px; color:var(--text-muted);
+  }
+  .pagination{ display:flex; gap:6px; }
+  .pagination button{
+    width:30px; height:30px; border-radius:7px; border:1.5px solid var(--border);
+    background:#fff; cursor:pointer; color:var(--text); font-size:13px;
+  }
+  .pagination button:hover:not(:disabled){ border-color:var(--blue); color:var(--blue); }
+  .pagination button.current{ background:var(--navy); border-color:var(--navy); color:#fff; }
+  .pagination button:disabled{ opacity:.35; cursor:not-allowed; }
+
+  /* skeleton */
+  .skeleton-row td{ padding:14px; }
+  .skeleton-bar{
+    height:12px; border-radius:4px;
+    background:linear-gradient(90deg,#EDF1F6 25%,#F6F8FB 37%,#EDF1F6 63%);
+    background-size:400% 100%;
+    animation:shimmer 1.3s ease infinite;
+  }
+  @keyframes shimmer{ 0%{background-position:100% 0;} 100%{background-position:0 0;} }
+
+  /* empty state */
+  .empty-state{ padding:56px 20px; text-align:center; }
+  .empty-state .icon{ font-size:34px; margin-bottom:10px; }
+  .empty-state h4{ margin:0 0 6px 0; font-size:15px; }
+  .empty-state p{ margin:0 0 16px 0; color:var(--text-muted); font-size:13.5px; }
+
+  /* ---------- Toasts ---------- */
+  .toast-stack{ position:fixed; bottom:20px; right:20px; display:flex; flex-direction:column; gap:8px; z-index:100; }
+  .toast{
+    background:var(--navy); color:#fff; padding:11px 16px; border-radius:8px;
+    font-size:13.5px; box-shadow:0 8px 20px rgba(11,27,51,0.25);
+    display:flex; align-items:center; gap:10px;
+    animation:toast-in .18s ease;
+    max-width:320px;
+  }
+  .toast .check{ color:#6FE0A8; flex:none; }
+  @keyframes toast-in{ from{ opacity:0; transform:translateY(6px);} to{opacity:1; transform:translateY(0);} }
+
+  /* ---------- Detail view ---------- */
+  .detail-grid{ display:grid; grid-template-columns:1.35fr 1fr; gap:16px; align-items:start; }
+  .detail-header-card{
+    background:var(--card); border:1.5px solid var(--border); border-radius:var(--radius);
+    padding:20px; box-shadow:var(--shadow); grid-column:1 / -1;
+    display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:16px;
+  }
+  .detail-header-card h2{ margin:0 0 6px 0; font-size:19px; }
+  .detail-meta{ display:flex; gap:22px; flex-wrap:wrap; margin-top:12px; }
+  .detail-meta .item{ font-size:13px; }
+  .detail-meta .item .k{ color:var(--text-muted); margin-bottom:3px; }
+  .detail-meta .item .v{ font-family:'IBM Plex Mono',monospace; font-weight:500; }
+  .detail-actions{ display:flex; gap:10px; }
+
+  .card{
+    background:var(--card); border:1.5px solid var(--border); border-radius:var(--radius);
+    padding:18px; box-shadow:var(--shadow);
+  }
+  .card h3{ margin:0 0 14px 0; font-size:14.5px; display:flex; align-items:center; justify-content:space-between; }
+
+  /* timeline */
+  .timeline{ list-style:none; margin:0; padding:0; }
+  .timeline li{
+    position:relative; padding:0 0 20px 26px; border-left:2px solid var(--border); margin-left:6px;
+  }
+  .timeline li:last-child{ border-color:transparent; padding-bottom:0; }
+  .timeline li .node{
+    position:absolute; left:-7px; top:1px; width:12px; height:12px; border-radius:50%;
+    background:#fff; border:2.5px solid var(--border);
+  }
+  .timeline li.done .node{ border-color:var(--status-delivered); background:var(--status-delivered); }
+  .timeline li.current .node{ border-color:var(--blue); background:var(--blue); box-shadow:0 0 0 4px var(--blue-tint); }
+  .timeline li .row{ display:flex; justify-content:space-between; gap:10px; cursor:pointer; }
+  .timeline li .label{ font-weight:600; font-size:13.5px; }
+  .timeline li .place{ font-size:12.5px; color:var(--text-muted); margin-top:2px; }
+  .timeline li .time{ font-size:12px; color:var(--text-faint); font-family:'IBM Plex Mono',monospace; white-space:nowrap; }
+  .timeline li .note-full{
+    display:none; margin-top:8px; font-size:12.5px; color:var(--text);
+    background:#F7F9FC; border:1px solid var(--border); border-radius:8px; padding:10px 12px;
+  }
+  .timeline li.expanded .note-full{ display:block; }
+  .timeline li .row:hover .label{ color:var(--blue); }
+
+  /* map */
+  .map-wrap{ position:relative; border-radius:10px; overflow:hidden; height:230px;
+    background:linear-gradient(180deg,#DCE9FB 0%, #EAF2FC 60%, #F3F8FE 100%); }
+  .route-line{ stroke:#9FB6E0; stroke-width:2; stroke-dasharray:5 5; fill:none; }
+  .map-marker{ cursor:pointer; }
+  .map-marker circle{ transition:r .12s ease; }
+  .map-marker:hover circle{ r:8; }
+  .map-tooltip{
+    position:absolute; background:var(--navy); color:#fff; padding:7px 10px; border-radius:7px;
+    font-size:11.5px; white-space:nowrap; transform:translate(-50%,-130%); pointer-events:none;
+    box-shadow:0 6px 16px rgba(11,27,51,0.25); z-index:5; display:none;
+  }
+  .map-legend{ display:flex; gap:14px; margin-top:10px; flex-wrap:wrap; }
+  .map-legend .li{ display:flex; align-items:center; gap:6px; font-size:11.5px; color:var(--text-muted); }
+  .map-legend .sw{ width:9px; height:9px; border-radius:50%; }
+
+  /* documents */
+  .doc-list{ list-style:none; margin:0; padding:0; }
+  .doc-list li{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:10px 0; border-bottom:1px solid var(--border); gap:10px;
+  }
+  .doc-list li:last-child{ border-bottom:none; }
+  .doc-info{ display:flex; align-items:center; gap:10px; }
+  .doc-icon{
+    width:32px; height:32px; border-radius:7px; background:var(--blue-tint); color:var(--blue);
+    display:flex; align-items:center; justify-content:center; flex:none;
+  }
+  .doc-icon.na{ background:#EEF1F5; color:var(--text-faint); }
+  .doc-name{ font-size:13.5px; font-weight:500; }
+  .doc-sub{ font-size:12px; color:var(--text-faint); margin-top:1px; }
+
+  /* share modal */
+  .modal-overlay{ position:fixed; inset:0; background:rgba(11,27,51,0.4); display:none; align-items:center; justify-content:center; z-index:60; }
+  .modal-overlay.open{ display:flex; }
+  .modal{ background:#fff; border-radius:12px; padding:22px; width:380px; box-shadow:0 20px 48px rgba(11,27,51,0.25); }
+  .modal h3{ margin:0 0 6px 0; font-size:16px; }
+  .modal p.sub{ margin:0 0 14px 0; color:var(--text-muted); font-size:13px; }
+  .link-row{ display:flex; gap:8px; }
+  .link-row input{
+    flex:1; border:1.5px solid var(--border); border-radius:8px; padding:9px 10px; font-size:12.5px;
+    font-family:'IBM Plex Mono',monospace; color:var(--text-muted); background:#F7F9FC;
+  }
+  .modal-close-row{ display:flex; justify-content:flex-end; margin-top:16px; }
+
+  .hidden{ display:none !important; }
+  .sr-only{ position:absolute; width:1px;height:1px; overflow:hidden; clip:rect(0 0 0 0); }
+
+  @media (max-width: 900px){
+    .kpi-row{ grid-template-columns:repeat(2,1fr); }
+    .detail-grid{ grid-template-columns:1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="app-header">
+  <div class="brand"><div class="mark">P</div> Portway</div>
+  <nav>
+    <span class="active">Shipment Tracking</span>
+    <span>Vessel Schedule</span>
+    <span>Airline Schedule</span>
+    <span>Reports</span>
+  </nav>
+  <div class="user-pill">JS</div>
+</div>
+
+<div class="app-body" id="app"></div>
+
+<div class="toast-stack" id="toastStack"></div>
+
+<div class="drawer-overlay" id="drawerOverlay"></div>
+<div class="drawer" id="filterDrawer">
+  <h3>Advanced filter</h3>
+  <div class="field">
+    <label for="fMode">Mode</label>
+    <select id="fMode">
+      <option value="">Any mode</option>
+      <option>Ocean</option>
+      <option>Air</option>
+      <option>Road</option>
+    </select>
+  </div>
+  <div class="field">
+    <label for="fStatus">Status</label>
+    <select id="fStatus">
+      <option value="">Any status</option>
+      <option>In Transit</option>
+      <option>Arriving Soon</option>
+      <option>Delivered</option>
+      <option>Delayed</option>
+      <option>Cancelled</option>
+    </select>
+  </div>
+  <div class="field">
+    <label for="fOrigin">Origin</label>
+    <input id="fOrigin" placeholder="e.g. Shanghai" />
+  </div>
+  <div class="field">
+    <label for="fDestination">Destination</label>
+    <input id="fDestination" placeholder="e.g. Rotterdam" />
+  </div>
+  <div class="field">
+    <label for="fDateFrom">ETD from</label>
+    <input id="fDateFrom" type="date" />
+  </div>
+  <div class="field">
+    <label for="fDateTo">ETD to</label>
+    <input id="fDateTo" type="date" />
+  </div>
+  <div class="drawer-actions">
+    <button class="btn btn-secondary" id="drawerReset" style="flex:1">Reset</button>
+    <button class="btn btn-primary" id="drawerApply" style="flex:1">Apply filters</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="shareOverlay">
+  <div class="modal">
+    <h3>Share shipment</h3>
+    <p class="sub">Anyone with this link can view read-only tracking details.</p>
+    <div class="link-row">
+      <input id="shareLink" readonly />
+      <button class="btn btn-primary" id="copyLinkBtn">Copy link</button>
+    </div>
+    <div class="modal-close-row">
+      <button class="btn btn-ghost" id="closeShareModal">Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============================= DATA ============================= */
+const SHIPMENTS = [
+  {
+    id:"SHP-2026-04831", container:"TCLU4829107", bl:"BLPTW48311", booking:"BKPTW10091",
+    mode:"Ocean", status:"In Transit", origin:"Shanghai, CN", destination:"Los Angeles, US",
+    etd:"2026-08-14", eta:"2026-09-18",
+    timeline:[
+      {label:"Booking confirmed", place:"Shanghai, CN", time:"2026-08-10 09:12", note:"Booking confirmed with carrier OceanLine. Container allocation TCLU4829107 assigned.", state:"done"},
+      {label:"Departed origin port", place:"Shanghai, CN", time:"2026-08-14 22:40", note:"Vessel Ever Compass departed Yangshan Terminal on schedule.", state:"done"},
+      {label:"Transshipment", place:"Busan, KR", time:"2026-08-19 06:05", note:"Transshipped to vessel Pacific Horizon at Busan New Port, 4-hour connection window.", state:"done"},
+      {label:"In transit — mid ocean", place:"North Pacific", time:"2026-09-02 00:00", note:"Vessel tracking nominal, no weather deviations reported.", state:"current"},
+      {label:"Arrival at destination port", place:"Los Angeles, US", time:"Est. 2026-09-18", note:"Awaiting berth confirmation at Los Angeles port complex.", state:"pending"},
+      {label:"Customs clearance", place:"Los Angeles, US", time:"Est. 2026-09-19", note:"Customs clearance to be initiated on arrival.", state:"pending"},
+    ],
+    map:[
+      {type:"origin", name:"Shanghai, CN", x:78, y:44, time:"2026-08-14 22:40"},
+      {type:"transship", name:"Busan, KR", x:82, y:36, time:"2026-08-19 06:05"},
+      {type:"current", name:"North Pacific (current position)", x:48, y:32, time:"2026-09-02 00:00"},
+      {type:"destination", name:"Los Angeles, US", x:14, y:40, time:"Est. 2026-09-18"},
+    ],
+    documents:[
+      {name:"Bill of Lading", available:true, sub:"PDF · 214 KB"},
+      {name:"Commercial Invoice", available:true, sub:"PDF · 98 KB"},
+      {name:"Packing List", available:true, sub:"PDF · 76 KB"},
+      {name:"Certificate of Origin", available:false, sub:"Not yet available"},
+      {name:"Customs Declaration", available:false, sub:"Not yet available"},
+    ],
+  },
+  {
+    id:"SHP-2026-04812", container:"MSKU7728341", bl:"BLPTW48122", booking:"BKPTW10088",
+    mode:"Ocean", status:"Delayed", origin:"Ningbo, CN", destination:"Rotterdam, NL",
+    etd:"2026-08-02", eta:"2026-09-12",
+    timeline:[
+      {label:"Booking confirmed", place:"Ningbo, CN", time:"2026-07-28 11:00", note:"Booking confirmed with carrier MaerskLine.", state:"done"},
+      {label:"Departed origin port", place:"Ningbo, CN", time:"2026-08-02 14:20", note:"Vessel MSC Aurora departed Ningbo-Zhoushan port.", state:"done"},
+      {label:"Port congestion delay", place:"Singapore, SG", time:"2026-08-20 08:00", note:"Vessel held at Singapore anchorage due to port congestion; new ETA revised by 7 days.", state:"current"},
+      {label:"Transshipment", place:"Singapore, SG", time:"Est. 2026-08-24", note:"Awaiting berth window for transshipment to Rotterdam-bound vessel.", state:"pending"},
+      {label:"Arrival at destination port", place:"Rotterdam, NL", time:"Est. 2026-09-12", note:"Revised ETA reflects congestion delay.", state:"pending"},
+    ],
+    map:[
+      {type:"origin", name:"Ningbo, CN", x:80, y:46, time:"2026-08-02 14:20"},
+      {type:"current", name:"Singapore, SG (delayed)", x:74, y:58, time:"2026-08-20 08:00"},
+      {type:"destination", name:"Rotterdam, NL", x:22, y:16, time:"Est. 2026-09-12"},
+    ],
+    documents:[
+      {name:"Bill of Lading", available:true, sub:"PDF · 201 KB"},
+      {name:"Commercial Invoice", available:true, sub:"PDF · 104 KB"},
+      {name:"Packing List", available:false, sub:"Not yet available"},
+      {name:"Certificate of Origin", available:false, sub:"Not yet available"},
+    ],
+  },
+  {
+    id:"SHP-2026-04790", container:"—", bl:"—", booking:"BKPTW10079",
+    mode:"Air", status:"Arriving Soon", origin:"Hong Kong, HK", destination:"Chicago, US",
+    etd:"2026-09-06", eta:"2026-09-12",
+    timeline:[
+      {label:"Booking confirmed", place:"Hong Kong, HK", time:"2026-09-03 10:00", note:"Air waybill issued with carrier CathayCargo.", state:"done"},
+      {label:"Departed origin airport", place:"Hong Kong, HK", time:"2026-09-06 23:10", note:"Flight CX-889F departed HKG cargo terminal.", state:"done"},
+      {label:"Transit hub", place:"Anchorage, US", time:"2026-09-07 09:40", note:"Brief refuel stop, cargo remained on board.", state:"done"},
+      {label:"Arriving soon", place:"Chicago, US", time:"Est. 2026-09-12", note:"Final approach to O'Hare cargo facility, on schedule.", state:"current"},
+      {label:"Customs clearance", place:"Chicago, US", time:"Est. 2026-09-12", note:"Customs pre-clearance documents submitted.", state:"pending"},
+    ],
+    map:[
+      {type:"origin", name:"Hong Kong, HK", x:80, y:50, time:"2026-09-06 23:10"},
+      {type:"transship", name:"Anchorage, US", x:20, y:14, time:"2026-09-07 09:40"},
+      {type:"current", name:"En route to Chicago", x:16, y:30, time:"In flight"},
+      {type:"destination", name:"Chicago, US", x:24, y:34, time:"Est. 2026-09-12"},
+    ],
+    documents:[
+      {name:"Air Waybill", available:true, sub:"PDF · 88 KB"},
+      {name:"Commercial Invoice", available:true, sub:"PDF · 91 KB"},
+      {name:"Packing List", available:true, sub:"PDF · 64 KB"},
+    ],
+  },
+  {
+    id:"SHP-2026-04773", container:"HLXU2210984", bl:"BLPTW47731", booking:"BKPTW10065",
+    mode:"Ocean", status:"Delivered", origin:"Busan, KR", destination:"Long Beach, US",
+    etd:"2026-07-20", eta:"2026-08-22",
+    timeline:[
+      {label:"Booking confirmed", place:"Busan, KR", time:"2026-07-16 09:00", note:"Booking confirmed with carrier Hapag-Lloyd.", state:"done"},
+      {label:"Departed origin port", place:"Busan, KR", time:"2026-07-20 19:15", note:"Vessel HL Trust departed Busan New Port.", state:"done"},
+      {label:"Arrival at destination port", place:"Long Beach, US", time:"2026-08-21 07:30", note:"Vessel berthed one day ahead of schedule.", state:"done"},
+      {label:"Customs cleared", place:"Long Beach, US", time:"2026-08-22 13:00", note:"Customs clearance completed without inspection hold.", state:"done"},
+      {label:"Delivered to consignee", place:"Long Beach, US", time:"2026-08-22 17:45", note:"Container delivered to consignee warehouse, POD signed.", state:"done"},
+    ],
+    map:[
+      {type:"origin", name:"Busan, KR", x:82, y:38, time:"2026-07-20 19:15"},
+      {type:"destination", name:"Long Beach, US", x:16, y:44, time:"2026-08-22 17:45"},
+      {type:"current", name:"Delivered — Long Beach, US", x:16, y:44, time:"2026-08-22 17:45"},
+    ],
+    documents:[
+      {name:"Bill of Lading", available:true, sub:"PDF · 198 KB"},
+      {name:"Commercial Invoice", available:true, sub:"PDF · 95 KB"},
+      {name:"Packing List", available:true, sub:"PDF · 70 KB"},
+      {name:"Customs Declaration", available:true, sub:"PDF · 112 KB"},
+      {name:"Proof of Delivery", available:true, sub:"PDF · 55 KB"},
+    ],
+  },
+  {
+    id:"SHP-2026-04756", container:"CMAU9012763", bl:"BLPTW47561", booking:"BKPTW10054",
+    mode:"Ocean", status:"In Transit", origin:"Singapore, SG", destination:"Hamburg, DE",
+    etd:"2026-08-25", eta:"2026-09-29",
+    timeline:[
+      {label:"Booking confirmed", place:"Singapore, SG", time:"2026-08-20 15:00", note:"Booking confirmed with carrier CMA CGM.", state:"done"},
+      {label:"Departed origin port", place:"Singapore, SG", time:"2026-08-25 20:00", note:"Vessel CMA CGM Bellini departed PSA Terminal.", state:"done"},
+      {label:"In transit — Indian Ocean", place:"Indian Ocean", time:"2026-09-04 00:00", note:"On schedule, next stop Jebel Ali for transshipment.", state:"current"},
+      {label:"Transshipment", place:"Jebel Ali, AE", time:"Est. 2026-09-10", note:"Scheduled transshipment window pending confirmation.", state:"pending"},
+      {label:"Arrival at destination port", place:"Hamburg, DE", time:"Est. 2026-09-29", note:"Final leg via Suez Canal route.", state:"pending"},
+    ],
+    map:[
+      {type:"origin", name:"Singapore, SG", x:74, y:58, time:"2026-08-25 20:00"},
+      {type:"current", name:"Indian Ocean (current position)", x:60, y:56, time:"2026-09-04 00:00"},
+      {type:"transship", name:"Jebel Ali, AE", x:52, y:44, time:"Est. 2026-09-10"},
+      {type:"destination", name:"Hamburg, DE", x:26, y:14, time:"Est. 2026-09-29"},
+    ],
+    documents:[
+      {name:"Bill of Lading", available:true, sub:"PDF · 210 KB"},
+      {name:"Commercial Invoice", available:true, sub:"PDF · 89 KB"},
+      {name:"Packing List", available:false, sub:"Not yet available"},
+    ],
+  },
+  {
+    id:"SHP-2026-04701", container:"—", bl:"—", booking:"BKPTW10041",
+    mode:"Road", status:"Cancelled", origin:"Guangzhou, CN", destination:"Shenzhen, CN",
+    etd:"2026-08-10", eta:"2026-08-11",
+    timeline:[
+      {label:"Booking confirmed", place:"Guangzhou, CN", time:"2026-08-06 10:00", note:"Road booking confirmed for cross-city transfer.", state:"done"},
+      {label:"Shipment cancelled", place:"Guangzhou, CN", time:"2026-08-09 16:20", note:"Cancelled at shipper's request prior to dispatch; no charges applied.", state:"done"},
+    ],
+    map:[
+      {type:"origin", name:"Guangzhou, CN", x:78, y:52, time:"2026-08-06 10:00"},
+      {type:"destination", name:"Shenzhen, CN (cancelled)", x:79, y:54, time:"—"},
+      {type:"current", name:"Cancelled before dispatch", x:78, y:52, time:"2026-08-09 16:20"},
+    ],
+    documents:[
+      {name:"Booking Confirmation", available:true, sub:"PDF · 40 KB"},
+      {name:"Cancellation Notice", available:true, sub:"PDF · 22 KB"},
+    ],
+  },
+  {
+    id:"SHP-2026-04658", container:"OOLU5563218", bl:"BLPTW46581", booking:"BKPTW10032",
+    mode:"Ocean", status:"Delivered", origin:"Kaohsiung, TW", destination:"Oakland, US",
+    etd:"2026-07-05", eta:"2026-08-07",
+    timeline:[
+      {label:"Booking confirmed", place:"Kaohsiung, TW", time:"2026-07-01 09:30", note:"Booking confirmed with carrier OOCL.", state:"done"},
+      {label:"Departed origin port", place:"Kaohsiung, TW", time:"2026-07-05 18:00", note:"Vessel OOCL Faith departed Kaohsiung Terminal.", state:"done"},
+      {label:"Arrival at destination port", place:"Oakland, US", time:"2026-08-06 11:20", note:"Vessel berthed on schedule.", state:"done"},
+      {label:"Delivered to consignee", place:"Oakland, US", time:"2026-08-07 14:10", note:"Container delivered, POD signed by receiving warehouse.", state:"done"},
+    ],
+    map:[
+      {type:"origin", name:"Kaohsiung, TW", x:80, y:48, time:"2026-07-05 18:00"},
+      {type:"destination", name:"Oakland, US", x:12, y:38, time:"2026-08-07 14:10"},
+      {type:"current", name:"Delivered — Oakland, US", x:12, y:38, time:"2026-08-07 14:10"},
+    ],
+    documents:[
+      {name:"Bill of Lading", available:true, sub:"PDF · 205 KB"},
+      {name:"Commercial Invoice", available:true, sub:"PDF · 93 KB"},
+      {name:"Packing List", available:true, sub:"PDF · 68 KB"},
+      {name:"Proof of Delivery", available:true, sub:"PDF · 51 KB"},
+    ],
+  },
+  {
+    id:"SHP-2026-04430", container:"MSCU3387206", bl:"BLPTW44301", booking:"BKPTW10008",
+    mode:"Ocean", status:"Delayed", origin:"Qingdao, CN", destination:"Antwerp, BE",
+    etd:"2026-06-30", eta:"2026-08-02",
+    timeline:[
+      {label:"Booking confirmed", place:"Qingdao, CN", time:"2026-06-25 08:00", note:"Booking confirmed with carrier MSC.", state:"done"},
+      {label:"Departed origin port", place:"Qingdao, CN", time:"2026-06-30 21:00", note:"Vessel MSC Diletta departed Qingdao Port.", state:"done"},
+      {label:"Weather delay", place:"Suez Canal, EG", time:"2026-07-22 05:00", note:"Convoy delayed 3 days due to adverse weather in the Suez Canal transit zone.", state:"current"},
+      {label:"Arrival at destination port", place:"Antwerp, BE", time:"Est. 2026-08-02", note:"Revised ETA reflects Suez transit delay.", state:"pending"},
+    ],
+    map:[
+      {type:"origin", name:"Qingdao, CN", x:80, y:42, time:"2026-06-30 21:00"},
+      {type:"current", name:"Suez Canal, EG (delayed)", x:46, y:38, time:"2026-07-22 05:00"},
+      {type:"destination", name:"Antwerp, BE", x:24, y:14, time:"Est. 2026-08-02"},
+    ],
+    documents:[
+      {name:"Bill of Lading", available:true, sub:"PDF · 199 KB"},
+      {name:"Commercial Invoice", available:false, sub:"Not yet available"},
+      {name:"Packing List", available:false, sub:"Not yet available"},
+    ],
+  },
+];
+
+const STATUS_META = {
+  "In Transit":{cls:"status-transit", color:"var(--status-transit)"},
+  "Arriving Soon":{cls:"status-arriving", color:"var(--status-arriving)"},
+  "Delivered":{cls:"status-delivered", color:"var(--status-delivered)"},
+  "Delayed":{cls:"status-delayed", color:"var(--status-delayed)"},
+  "Cancelled":{cls:"status-cancelled", color:"var(--status-cancelled)"},
+};
+
+const ALL_COLUMNS = [
+  {key:"id", label:"Shipment ID", sortable:true, always:true},
+  {key:"container", label:"Container No.", sortable:false},
+  {key:"bl", label:"B/L Number", sortable:false},
+  {key:"booking", label:"Booking No.", sortable:false},
+  {key:"mode", label:"Mode", sortable:true},
+  {key:"origin", label:"Origin", sortable:true},
+  {key:"destination", label:"Destination", sortable:true},
+  {key:"etd", label:"ETD", sortable:true},
+  {key:"eta", label:"ETA", sortable:true},
+  {key:"status", label:"Status", sortable:true, always:true},
+];
+
+/* ============================= STATE ============================= */
+const state = {
+  view:"list", // "list" | "detail"
+  detailId:null,
+  quickSearch:"",
+  statusFilter:"",
+  modeFilter:"",
+  advanced:{ origin:"", destination:"", dateFrom:"", dateTo:"" },
+  sortKey:"id",
+  sortDir:"asc",
+  page:1,
+  pageSize:5,
+  hiddenColumns:new Set(),
+  loading:false,
+  savedListState:null, // snapshot restored when returning from detail
+};
+
+let toastId = 0;
+
+/* ============================= HELPERS ============================= */
+function fmtDate(iso){
+  if(!iso || iso === "—") return "—";
+  const isEst = iso.startsWith("Est.");
+  const clean = isEst ? iso.replace("Est. ","") : iso;
+  const d = new Date(clean.includes(" ") ? clean.replace(" ","T") : clean+"T00:00:00");
+  if(isNaN(d)) return iso;
+  const opts = clean.includes(":") ? {day:"numeric",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"} : {day:"numeric",month:"short",year:"numeric"};
+  const out = d.toLocaleDateString("en-US", opts);
+  return isEst ? "Est. "+out : out;
+}
+function debounce(fn, delay){
+  let t;
+  return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args), delay); };
+}
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function showToast(message, isSuccess=true){
+  const stack = document.getElementById("toastStack");
+  const el = document.createElement("div");
+  const id = "toast-"+(++toastId);
+  el.className = "toast";
+  el.id = id;
+  el.innerHTML = `<span class="check">${isSuccess ? "✓" : "•"}</span><span>${escapeHtml(message)}</span>`;
+  stack.appendChild(el);
+  setTimeout(()=>{ el.style.transition="opacity .25s ease"; el.style.opacity="0"; setTimeout(()=>el.remove(), 250); }, 2600);
+}
+
+/* ============================= FILTERING / SORTING ============================= */
+function getFilteredSorted(){
+  let rows = SHIPMENTS.slice();
+
+  if(state.quickSearch.trim()){
+    const q = state.quickSearch.trim().toLowerCase();
+    rows = rows.filter(r =>
+      r.id.toLowerCase().includes(q) ||
+      (r.container||"").toLowerCase().includes(q) ||
+      (r.bl||"").toLowerCase().includes(q) ||
+      (r.booking||"").toLowerCase().includes(q)
+    );
+  }
+  if(state.statusFilter){ rows = rows.filter(r => r.status === state.statusFilter); }
+  if(state.modeFilter){ rows = rows.filter(r => r.mode === state.modeFilter); }
+  if(state.advanced.origin.trim()){
+    const q = state.advanced.origin.trim().toLowerCase();
+    rows = rows.filter(r => r.origin.toLowerCase().includes(q));
+  }
+  if(state.advanced.destination.trim()){
+    const q = state.advanced.destination.trim().toLowerCase();
+    rows = rows.filter(r => r.destination.toLowerCase().includes(q));
+  }
+  if(state.advanced.dateFrom){ rows = rows.filter(r => r.etd >= state.advanced.dateFrom); }
+  if(state.advanced.dateTo){ rows = rows.filter(r => r.etd <= state.advanced.dateTo); }
+
+  rows.sort((a,b)=>{
+    let av = a[state.sortKey], bv = b[state.sortKey];
+    av = (av||"").toString().toLowerCase();
+    bv = (bv||"").toString().toLowerCase();
+    if(av < bv) return state.sortDir === "asc" ? -1 : 1;
+    if(av > bv) return state.sortDir === "asc" ? 1 : -1;
+    return 0;
+  });
+  return rows;
+}
+
+function activeFilterChips(){
+  const chips = [];
+  if(state.statusFilter) chips.push({key:"statusFilter", label:"Status: "+state.statusFilter});
+  if(state.modeFilter) chips.push({key:"modeFilter", label:"Mode: "+state.modeFilter});
+  if(state.advanced.origin) chips.push({key:"adv-origin", label:"Origin: "+state.advanced.origin});
+  if(state.advanced.destination) chips.push({key:"adv-destination", label:"Destination: "+state.advanced.destination});
+  if(state.advanced.dateFrom) chips.push({key:"adv-dateFrom", label:"ETD from "+state.advanced.dateFrom});
+  if(state.advanced.dateTo) chips.push({key:"adv-dateTo", label:"ETD to "+state.advanced.dateTo});
+  if(state.quickSearch) chips.push({key:"quickSearch", label:'Search: "'+state.quickSearch+'"'});
+  return chips;
+}
+function removeChip(key){
+  if(key==="statusFilter") state.statusFilter="";
+  else if(key==="modeFilter") state.modeFilter="";
+  else if(key==="adv-origin") state.advanced.origin="";
+  else if(key==="adv-destination") state.advanced.destination="";
+  else if(key==="adv-dateFrom") state.advanced.dateFrom="";
+  else if(key==="adv-dateTo") state.advanced.dateTo="";
+  else if(key==="quickSearch") state.quickSearch="";
+  state.page = 1;
+  applyWithLoading();
+}
+
+function applyWithLoading(){
+  state.loading = true;
+  render();
+  setTimeout(()=>{ state.loading = false; render(); }, 420);
+}
+
+/* ============================= RENDER: LIST VIEW ============================= */
+function renderList(){
+  const all = SHIPMENTS;
+  const counts = {
+    total: all.length,
+    "In Transit": all.filter(r=>r.status==="In Transit").length,
+    "Arriving Soon": all.filter(r=>r.status==="Arriving Soon").length,
+    "Delivered": all.filter(r=>r.status==="Delivered").length,
+    "Delayed": all.filter(r=>r.status==="Delayed").length,
+  };
+
+  const filtered = getFilteredSorted();
+  const totalPages = Math.max(1, Math.ceil(filtered.length / state.pageSize));
+  state.page = Math.min(state.page, totalPages);
+  const pageRows = filtered.slice((state.page-1)*state.pageSize, state.page*state.pageSize);
+
+  const visibleCols = ALL_COLUMNS.filter(c => c.always || !state.hiddenColumns.has(c.key));
+
+  const html = `
+    <div class="page-title">Shipment Tracking</div>
+
+    <div class="kpi-row">
+      <button class="kpi-card ${state.statusFilter==='' ? 'active':''}" data-kpi="">
+        <div class="kpi-label"><span class="dot" style="background:${'#0B1B33'}"></span>Total Shipments</div>
+        <div class="kpi-value">${counts.total}</div>
+      </button>
+      <button class="kpi-card ${state.statusFilter==='In Transit' ? 'active':''}" data-kpi="In Transit">
+        <div class="kpi-label"><span class="dot" style="background:var(--status-transit)"></span>In Transit</div>
+        <div class="kpi-value">${counts["In Transit"]}</div>
+      </button>
+      <button class="kpi-card ${state.statusFilter==='Arriving Soon' ? 'active':''}" data-kpi="Arriving Soon">
+        <div class="kpi-label"><span class="dot" style="background:var(--status-arriving)"></span>Arriving Soon</div>
+        <div class="kpi-value">${counts["Arriving Soon"]}</div>
+      </button>
+      <button class="kpi-card ${state.statusFilter==='Delivered' ? 'active':''}" data-kpi="Delivered">
+        <div class="kpi-label"><span class="dot" style="background:var(--status-delivered)"></span>Delivered</div>
+        <div class="kpi-value">${counts["Delivered"]}</div>
+      </button>
+      <button class="kpi-card ${state.statusFilter==='Delayed' ? 'active':''}" data-kpi="Delayed">
+        <div class="kpi-label"><span class="dot" style="background:var(--status-delayed)"></span>Delayed</div>
+        <div class="kpi-value">${counts["Delayed"]}</div>
+      </button>
+    </div>
+
+    <div class="panel">
+      <div class="panel-row">
+        <div class="field">
+          <label for="panelSearch">Shipment ID / Container / B-L / Booking</label>
+          <input id="panelSearch" placeholder="e.g. SHP-2026-04831" value="${escapeHtml(state.quickSearch)}" style="min-width:260px" />
+        </div>
+        <button class="btn btn-primary" id="panelSearchBtn">Search</button>
+        <button class="btn btn-secondary" id="advFilterBtn">Advanced filter</button>
+      </div>
+      ${ activeFilterChips().length ? `<div class="chip-row">${activeFilterChips().map(c=>`
+          <span class="chip">${escapeHtml(c.label)}<button data-chip="${c.key}" aria-label="Remove filter">×</button></span>
+        `).join("")}</div>` : "" }
+    </div>
+
+    <div class="table-card">
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <div class="search-box">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-3.5-3.5"/></svg>
+            <input id="toolbarSearch" placeholder="Filter visible rows…" value="${escapeHtml(state.quickSearch)}" />
+          </div>
+          <select id="modeSelect">
+            <option value="">All modes</option>
+            <option ${state.modeFilter==="Ocean"?"selected":""}>Ocean</option>
+            <option ${state.modeFilter==="Air"?"selected":""}>Air</option>
+            <option ${state.modeFilter==="Road"?"selected":""}>Road</option>
+          </select>
+          <select id="statusSelect">
+            <option value="">All statuses</option>
+            ${Object.keys(STATUS_META).map(s=>`<option ${state.statusFilter===s?"selected":""}>${s}</option>`).join("")}
+          </select>
+        </div>
+        <div class="toolbar-left">
+          <div class="popover-wrap">
+            <button class="btn btn-secondary" id="columnsBtn">Customize columns</button>
+            <div class="popover" id="columnsPopover">
+              ${ALL_COLUMNS.filter(c=>!c.always).map(c=>`
+                <label><input type="checkbox" data-col="${c.key}" ${state.hiddenColumns.has(c.key) ? "" : "checked"}/> ${c.label}</label>
+              `).join("")}
+            </div>
+          </div>
+          <button class="btn btn-secondary" id="exportBtn">Export</button>
+        </div>
+      </div>
+
+      ${ state.loading ? renderSkeleton(visibleCols) : (
+          pageRows.length === 0 ? renderEmptyState() : renderTable(visibleCols, pageRows)
+        )
+      }
+
+      <div class="table-footer">
+        <span>Showing ${filtered.length===0?0:((state.page-1)*state.pageSize+1)}–${Math.min(state.page*state.pageSize, filtered.length)} of ${filtered.length} shipments</span>
+        <div class="pagination">
+          <button data-page="first" ${state.page===1?"disabled":""} aria-label="First page">«</button>
+          <button data-page="prev" ${state.page===1?"disabled":""} aria-label="Previous page">‹</button>
+          ${Array.from({length: totalPages}, (_,i)=>i+1).map(p=>`
+            <button data-page="${p}" class="${p===state.page?"current":""}">${p}</button>
+          `).join("")}
+          <button data-page="next" ${state.page===totalPages?"disabled":""} aria-label="Next page">›</button>
+          <button data-page="last" ${state.page===totalPages?"disabled":""} aria-label="Last page">»</button>
+        </div>
+      </div>
+    </div>
+  `;
+  return html;
+}
+
+function renderSkeleton(cols){
+  const rows = Array.from({length:5});
+  return `<table><thead><tr>${cols.map(c=>`<th>${c.label}</th>`).join("")}<th></th></tr></thead>
+    <tbody>${rows.map(()=>`<tr class="skeleton-row">${cols.map(()=>`<td><div class="skeleton-bar" style="width:${60+Math.random()*30}%"></div></td>`).join("")}<td><div class="skeleton-bar" style="width:24px"></div></td></tr>`).join("")}</tbody></table>`;
+}
+
+function renderEmptyState(){
+  return `<div class="empty-state">
+    <div class="icon">🔍</div>
+    <h4>No shipments match your filters</h4>
+    <p>Try adjusting your search terms or clearing active filters.</p>
+    <button class="btn btn-primary" id="clearFiltersBtn">Clear filters</button>
+  </div>`;
+}
+
+function renderTable(cols, rows){
+  return `<table>
+    <thead><tr>
+      ${cols.map(c=>`
+        <th data-sort="${c.sortable?c.key:''}" class="${state.sortKey===c.key?'sorted':''}">
+          <span class="th-inner">${c.label} ${c.sortable ? `<span class="arrow">${state.sortKey===c.key ? (state.sortDir==='asc'?'▲':'▼') : '▲'}</span>` : ''}</span>
+        </th>`).join("")}
+      <th></th>
+    </tr></thead>
+    <tbody>
+      ${rows.map(r=>`
+        <tr data-row="${r.id}">
+          ${cols.map(c=>renderCell(c,r)).join("")}
+          <td><button class="icon-btn" data-view="${r.id}" aria-label="View ${r.id}" title="View detail">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button></td>
+        </tr>`).join("")}
+    </tbody>
+  </table>`;
+}
+function renderCell(c, r){
+  if(c.key==="status"){
+    const m = STATUS_META[r.status];
+    return `<td><span class="status-badge ${m.cls}"><span class="dot" style="background:currentColor"></span>${r.status}</span></td>`;
+  }
+  if(c.key==="etd" || c.key==="eta"){
+    return `<td class="mono">${fmtDate(r[c.key])}</td>`;
+  }
+  if(c.key==="container" || c.key==="bl" || c.key==="booking"){
+    const v = r[c.key];
+    return v==="—" ? `<td class="muted">Not applicable</td>` : `<td class="mono">${escapeHtml(v)}</td>`;
+  }
+  if(c.key==="id"){
+    return `<td class="mono" style="font-weight:600">${escapeHtml(r.id)}</td>`;
+  }
+  return `<td>${escapeHtml(r[c.key])}</td>`;
+}
+
+/* ============================= RENDER: DETAIL VIEW ============================= */
+function renderDetail(){
+  const s = SHIPMENTS.find(x=>x.id===state.detailId);
+  if(!s) return `<p>Shipment not found.</p>`;
+  const m = STATUS_META[s.status];
+
+  return `
+    <div class="breadcrumb"><span class="crumb-link" id="backToList">Shipment Tracking</span> <span>/</span> <span>${s.id}</span></div>
+    <div class="page-title" style="margin-bottom:16px">${s.id}</div>
+
+    <div class="detail-grid">
+      <div class="detail-header-card">
+        <div>
+          <h2>${s.origin} → ${s.destination}</h2>
+          <span class="status-badge ${m.cls}"><span class="dot" style="background:currentColor"></span>${s.status}</span>
+          <div class="detail-meta">
+            <div class="item"><div class="k">Container No.</div><div class="v">${escapeHtml(s.container)}</div></div>
+            <div class="item"><div class="k">B/L Number</div><div class="v">${escapeHtml(s.bl)}</div></div>
+            <div class="item"><div class="k">Booking No.</div><div class="v">${escapeHtml(s.booking)}</div></div>
+            <div class="item"><div class="k">Mode</div><div class="v">${s.mode}</div></div>
+            <div class="item"><div class="k">ETD</div><div class="v">${fmtDate(s.etd)}</div></div>
+            <div class="item"><div class="k">ETA</div><div class="v">${fmtDate(s.eta)}</div></div>
+          </div>
+        </div>
+        <div class="detail-actions">
+          <button class="btn btn-secondary" id="shareBtn">Share</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Tracking timeline</h3>
+        <ul class="timeline">
+          ${s.timeline.map((t,i)=>`
+            <li class="${t.state} ${state.expandedMilestone===i ? 'expanded':''}" data-milestone="${i}">
+              <span class="node"></span>
+              <div class="row">
+                <div>
+                  <div class="label">${escapeHtml(t.label)}</div>
+                  <div class="place">${escapeHtml(t.place)}</div>
+                </div>
+                <div class="time">${fmtDate(t.time)}</div>
+              </div>
+              <div class="note-full">${escapeHtml(t.note)}</div>
+            </li>
+          `).join("")}
+        </ul>
+      </div>
+
+      <div class="card">
+        <h3>Route map</h3>
+        <div class="map-wrap" id="mapWrap">
+          <svg viewBox="0 0 100 70" width="100%" height="100%" style="position:absolute;inset:0">
+            <polyline class="route-line" points="${s.map.map(p=>p.x+","+p.y).join(" ")}" />
+            ${s.map.map((p,i)=>`
+              <g class="map-marker" data-marker="${i}" transform="translate(${p.x},${p.y})">
+                <circle r="6" fill="${markerColor(p.type)}" stroke="#fff" stroke-width="1.5"/>
+              </g>
+            `).join("")}
+          </svg>
+          <div class="map-tooltip" id="mapTooltip"></div>
+        </div>
+        <div class="map-legend">
+          <span class="li"><span class="sw" style="background:${markerColor('origin')}"></span>Origin</span>
+          <span class="li"><span class="sw" style="background:${markerColor('transship')}"></span>Transshipment</span>
+          <span class="li"><span class="sw" style="background:${markerColor('current')}"></span>Current position</span>
+          <span class="li"><span class="sw" style="background:${markerColor('destination')}"></span>Destination</span>
+        </div>
+      </div>
+
+      <div class="card" style="grid-column:1 / -1">
+        <h3>Documents</h3>
+        <ul class="doc-list">
+          ${s.documents.map(d=>`
+            <li>
+              <div class="doc-info">
+                <div class="doc-icon ${d.available?'':'na'}">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+                </div>
+                <div>
+                  <div class="doc-name">${escapeHtml(d.name)}</div>
+                  <div class="doc-sub">${escapeHtml(d.sub)}</div>
+                </div>
+              </div>
+              <button class="btn btn-secondary" data-download="${escapeHtml(d.name)}" ${d.available ? "" : "disabled style=\"cursor:not-allowed\""}>Download</button>
+            </li>
+          `).join("")}
+        </ul>
+      </div>
+    </div>
+  `;
+}
+function markerColor(type){
+  return { origin:"var(--status-transit)", transship:"#8A94A6", current:"#E8792D", destination:"var(--status-delivered)" }[type] || "#5B6B82";
+}
+
+/* ============================= MAIN RENDER + BIND ============================= */
+function render(){
+  const app = document.getElementById("app");
+  app.innerHTML = state.view === "list" ? renderList() : renderDetail();
+  bindEvents();
+}
+
+function bindEvents(){
+  if(state.view === "list"){
+    bindListEvents();
+  } else {
+    bindDetailEvents();
+  }
+}
+
+function bindListEvents(){
+  // KPI cards
+  document.querySelectorAll("[data-kpi]").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      state.statusFilter = btn.dataset.kpi;
+      state.page = 1;
+      applyWithLoading();
+    });
+  });
+
+  // panel search
+  const panelInput = document.getElementById("panelSearch");
+  document.getElementById("panelSearchBtn").addEventListener("click", ()=>{
+    state.quickSearch = panelInput.value;
+    state.page = 1;
+    applyWithLoading();
+  });
+  panelInput.addEventListener("keydown", e=>{ if(e.key==="Enter"){ state.quickSearch = panelInput.value; state.page=1; applyWithLoading(); } });
+
+  // advanced filter drawer
+  document.getElementById("advFilterBtn").addEventListener("click", openDrawer);
+  document.getElementById("drawerOverlay").addEventListener("click", closeDrawer);
+  document.getElementById("drawerApply").addEventListener("click", ()=>{
+    state.advanced.origin = document.getElementById("fOrigin").value;
+    state.advanced.destination = document.getElementById("fDestination").value;
+    state.advanced.dateFrom = document.getElementById("fDateFrom").value;
+    state.advanced.dateTo = document.getElementById("fDateTo").value;
+    state.modeFilter = document.getElementById("fMode").value;
+    state.statusFilter = document.getElementById("fStatus").value;
+    state.page = 1;
+    closeDrawer();
+    applyWithLoading();
+  });
+  document.getElementById("drawerReset").addEventListener("click", ()=>{
+    state.advanced = {origin:"",destination:"",dateFrom:"",dateTo:""};
+    state.modeFilter=""; state.statusFilter="";
+    document.getElementById("fOrigin").value="";
+    document.getElementById("fDestination").value="";
+    document.getElementById("fDateFrom").value="";
+    document.getElementById("fDateTo").value="";
+    document.getElementById("fMode").value="";
+    document.getElementById("fStatus").value="";
+  });
+
+  // chips
+  document.querySelectorAll("[data-chip]").forEach(btn=>{
+    btn.addEventListener("click", ()=> removeChip(btn.dataset.chip));
+  });
+
+  // toolbar search (debounced live)
+  const toolbarSearch = document.getElementById("toolbarSearch");
+  const debounced = debounce((val)=>{ state.quickSearch = val; state.page = 1; render(); }, 300);
+  toolbarSearch.addEventListener("input", ()=> debounced(toolbarSearch.value));
+
+  // mode / status selects
+  document.getElementById("modeSelect").addEventListener("change", e=>{
+    state.modeFilter = e.target.value; state.page = 1; applyWithLoading();
+  });
+  document.getElementById("statusSelect").addEventListener("change", e=>{
+    state.statusFilter = e.target.value; state.page = 1; applyWithLoading();
+  });
+
+  // columns popover
+  const colBtn = document.getElementById("columnsBtn");
+  const colPop = document.getElementById("columnsPopover");
+  colBtn.addEventListener("click", (e)=>{ e.stopPropagation(); colPop.classList.toggle("open"); });
+  document.addEventListener("click", ()=> colPop.classList.remove("open"), {once:true});
+  colPop.querySelectorAll("[data-col]").forEach(chk=>{
+    chk.addEventListener("click", e=> e.stopPropagation());
+    chk.addEventListener("change", ()=>{
+      if(chk.checked) state.hiddenColumns.delete(chk.dataset.col);
+      else state.hiddenColumns.add(chk.dataset.col);
+      render();
+    });
+  });
+
+  // export
+  document.getElementById("exportBtn").addEventListener("click", ()=>{
+    const count = getFilteredSorted().length;
+    showToast(`Exporting ${count} shipments to Excel…`);
+  });
+
+  // sortable headers
+  document.querySelectorAll("th[data-sort]").forEach(th=>{
+    if(!th.dataset.sort) return;
+    th.addEventListener("click", ()=>{
+      const key = th.dataset.sort;
+      if(state.sortKey === key){ state.sortDir = state.sortDir==="asc" ? "desc" : "asc"; }
+      else { state.sortKey = key; state.sortDir = "asc"; }
+      render();
+    });
+  });
+
+  // rows -> detail
+  document.querySelectorAll("tr[data-row]").forEach(tr=>{
+    tr.addEventListener("click", (e)=>{
+      if(e.target.closest("[data-view]")) return;
+      goToDetail(tr.dataset.row);
+    });
+  });
+  document.querySelectorAll("[data-view]").forEach(btn=>{
+    btn.addEventListener("click", (e)=>{ e.stopPropagation(); goToDetail(btn.dataset.view); });
+  });
+
+  // empty state clear
+  const clearBtn = document.getElementById("clearFiltersBtn");
+  if(clearBtn) clearBtn.addEventListener("click", ()=>{
+    state.quickSearch=""; state.statusFilter=""; state.modeFilter="";
+    state.advanced = {origin:"",destination:"",dateFrom:"",dateTo:""};
+    state.page = 1;
+    applyWithLoading();
+  });
+
+  // pagination
+  document.querySelectorAll("[data-page]").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const p = btn.dataset.page;
+      const filtered = getFilteredSorted();
+      const totalPages = Math.max(1, Math.ceil(filtered.length / state.pageSize));
+      if(p==="first") state.page = 1;
+      else if(p==="prev") state.page = Math.max(1, state.page-1);
+      else if(p==="next") state.page = Math.min(totalPages, state.page+1);
+      else if(p==="last") state.page = totalPages;
+      else state.page = parseInt(p,10);
+      render();
+    });
+  });
+}
+
+function goToDetail(id){
+  state.savedListState = JSON.parse(JSON.stringify({
+    quickSearch:state.quickSearch, statusFilter:state.statusFilter, modeFilter:state.modeFilter,
+    advanced:state.advanced, sortKey:state.sortKey, sortDir:state.sortDir, page:state.page
+  }));
+  state.view = "detail";
+  state.detailId = id;
+  state.expandedMilestone = null;
+  render();
+  window.scrollTo({top:0, behavior:"instant"});
+}
+
+function bindDetailEvents(){
+  document.getElementById("backToList").addEventListener("click", ()=>{
+    if(state.savedListState){
+      Object.assign(state, state.savedListState);
+    }
+    state.view = "list";
+    render();
+  });
+
+  // timeline expand
+  document.querySelectorAll("[data-milestone]").forEach(li=>{
+    li.addEventListener("click", ()=>{
+      const idx = parseInt(li.dataset.milestone,10);
+      state.expandedMilestone = state.expandedMilestone === idx ? null : idx;
+      render();
+    });
+  });
+
+  // map tooltips
+  const s = SHIPMENTS.find(x=>x.id===state.detailId);
+  const tooltip = document.getElementById("mapTooltip");
+  const mapWrap = document.getElementById("mapWrap");
+  document.querySelectorAll("[data-marker]").forEach(g=>{
+    g.addEventListener("mouseenter", ()=>{
+      const idx = parseInt(g.dataset.marker,10);
+      const p = s.map[idx];
+      const rect = mapWrap.getBoundingClientRect();
+      const px = (p.x/100)*rect.width;
+      const py = (p.y/70)*rect.height;
+      tooltip.style.display = "block";
+      tooltip.style.left = px+"px";
+      tooltip.style.top = py+"px";
+      tooltip.innerHTML = `<strong>${escapeHtml(p.name)}</strong><br/>${escapeHtml(fmtDate(p.time))}`;
+    });
+    g.addEventListener("mouseleave", ()=>{ tooltip.style.display = "none"; });
+  });
+
+  // downloads
+  document.querySelectorAll("[data-download]").forEach(btn=>{
+    if(btn.disabled) return;
+    btn.addEventListener("click", ()=> showToast(`Downloading ${btn.dataset.download}…`));
+  });
+
+  // share modal
+  document.getElementById("shareBtn").addEventListener("click", ()=>{
+    document.getElementById("shareLink").value = `https://portway.app/track/${s.id}`;
+    document.getElementById("shareOverlay").classList.add("open");
+  });
+}
+
+/* share modal global bindings (persist across renders) */
+document.getElementById("closeShareModal").addEventListener("click", ()=>{
+  document.getElementById("shareOverlay").classList.remove("open");
+});
+document.getElementById("shareOverlay").addEventListener("click", (e)=>{
+  if(e.target.id === "shareOverlay") document.getElementById("shareOverlay").classList.remove("open");
+});
+document.getElementById("copyLinkBtn").addEventListener("click", ()=>{
+  const input = document.getElementById("shareLink");
+  input.select();
+  navigator.clipboard && navigator.clipboard.writeText(input.value).catch(()=>{});
+  const btn = document.getElementById("copyLinkBtn");
+  const original = btn.textContent;
+  btn.textContent = "Copied";
+  showToast("Link copied to clipboard");
+  setTimeout(()=>{ btn.textContent = original; }, 1600);
+});
+
+/* drawer helpers */
+function openDrawer(){
+  document.getElementById("fMode").value = state.modeFilter;
+  document.getElementById("fStatus").value = state.statusFilter;
+  document.getElementById("fOrigin").value = state.advanced.origin;
+  document.getElementById("fDestination").value = state.advanced.destination;
+  document.getElementById("fDateFrom").value = state.advanced.dateFrom;
+  document.getElementById("fDateTo").value = state.advanced.dateTo;
+  document.getElementById("drawerOverlay").classList.add("open");
+  document.getElementById("filterDrawer").classList.add("open");
+}
+function closeDrawer(){
+  document.getElementById("drawerOverlay").classList.remove("open");
+  document.getElementById("filterDrawer").classList.remove("open");
+}
+
+/* init */
+render();
+</script>
+</body>
+</html>

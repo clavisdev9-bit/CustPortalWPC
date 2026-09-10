@@ -1,0 +1,29 @@
+-- Menonaktifkan sebuah koneksi tanpa menghapusnya. Sebelum ini satu-satunya cara mengeluarkan
+-- koneksi dari layanan adalah DELETE, dan odooConnectionService.remove() menolaknya selama masih
+-- ada identity_mappings -- artinya koneksi yang PALING perlu dihentikan (yang sudah punya
+-- pelanggan terpetakan padanya) justru satu-satunya yang tidak bisa dihentikan sama sekali. Yang
+-- tersisa untuk admin cuma dua tindakan yang sama-sama salah: membiarkannya melayani data dari
+-- Odoo yang seharusnya tidak dipakai lagi, atau menghapus dulu mapping pelanggannya.
+--
+-- Kolomnya baru, BUKAN nilai 'disabled' pada `status` -- padahal CHECK constraint di 0001 sudah
+-- mengizinkan nilai itu sejak awal. Alasannya: sejak BUG-30, `status` bukan lagi milik admin.
+-- odooConnectionHealth menulisnya dari setiap request pelanggan sungguhan, dan recordSuccess()
+-- menimpa apa pun yang bukan 'connected'. Menulis 'disabled' ke sana berarti request sukses
+-- pertama yang masih menyentuh koneksi itu menyalakannya kembali sendiri -- tanpa error, dan
+-- karena ada throttle 60 detik, munculnya intermiten.
+--
+-- Jadi dua kolom untuk dua fakta yang memang ortogonal, dan tidak ada penulis yang bertabrakan:
+--   status      -> apa kata Odoo pada kontak terakhir   (ditulis mesin)
+--   is_enabled  -> apakah portal boleh memakainya       (ditulis manusia)
+--
+-- Justru pemisahan itu yang membuat pemulihannya waras: koneksi yang dimatikan tetap boleh
+-- di-Test Connection, dan `status` hijau pada baris yang `is_enabled = false` adalah persis
+-- sinyal yang dibutuhkan admin sebelum menyalakannya lagi.
+--
+-- Tanpa kolom `disabled_at`: audit_logs sudah merekam siapa + kapan (odoo_connection.disable /
+-- .enable), dan kolom kedua yang isinya salinan tidak lengkap dari catatan itu hanya menambah
+-- satu tempat lagi yang bisa berbeda dengan aslinya.
+--
+-- DEFAULT true, jadi migrasi ini tidak mengubah perilaku baris mana pun yang sudah ada.
+ALTER TABLE odoo_connections
+  ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT true;

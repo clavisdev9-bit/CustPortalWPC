@@ -1,0 +1,16 @@
+-- BUG ditemukan saat menguji "Konfigurasi Provider AI" (0012_assistant_provider_configs.sql,
+-- lihat cr.md dan resolution.md): halaman baru mengubah "Provider Aktif" lewat
+-- PUT /admin/assistant/settings { provider } SAJA -- tanpa model, base_url, atau api_key, karena
+-- ketiganya sekarang hidup di assistant_provider_configs (satu baris per provider).
+--
+-- assistant_settings.model masih NOT NULL dari 0010_assistant.sql, dari masa sebelum tabel
+-- provider_configs ada -- waktu itu satu baris settings global memang satu-satunya sumber model.
+-- Instalasi BARU (belum pernah punya baris assistant_settings global sama sekali) yang menekan
+-- radio "Provider Aktif" lebih dulu sebelum mengisi form provider mana pun akan mencoba INSERT
+-- baris tanpa model -- constraint NOT NULL menolaknya dengan 500, bukan pesan yang bisa dipahami
+-- admin. assistantConfigService.resolve() sendiri SUDAH memperlakukan kolom ini sebagai opsional
+-- (lihat pick(pf.model, connection?.model, global?.model, env.assistant.model) -- kolom lama ini
+-- cuma satu lapis fallback, bukan satu-satunya sumber lagi), jadi constraint DB di sini lebih
+-- ketat daripada yang benar-benar dibutuhkan kode. Melonggarkannya menyamakan constraint dengan
+-- semantik kode yang sudah berlaku.
+ALTER TABLE assistant_settings ALTER COLUMN model DROP NOT NULL;

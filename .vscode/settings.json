@@ -1,0 +1,8 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^@'\nrequire\\(\"dotenv\"\\)\\.config\\(\\);\nconst pool = require\\(\"\\./src/db/pool\"\\);\npool\\.query\\(\"SELECT name, status, odoo_version, last_checked_at, last_error FROM odoo_connections ORDER BY created_at DESC\"\\)\n  \\.then\\(\\(result\\) => \\{ console\\.table\\(result\\.rows\\); return pool\\.end\\(\\); \\}\\)\n  \\.catch\\(\\(error\\) => \\{ console\\.error\\(error\\.message\\); process\\.exitCode = 1; \\}\\);\n'@ \\| node$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}

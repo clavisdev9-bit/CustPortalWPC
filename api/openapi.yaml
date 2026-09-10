@@ -1,0 +1,3676 @@
+openapi: 3.0.3
+info:
+  title: Customer Self-Service Portal API
+  version: "1.0.0-phase1"
+  description: >
+    Phase 1 (Foundation) surface: authentication, portal user management, RBAC,
+    company selection, Odoo connection administration and audit log read access.
+    Sales/Finance/Delivery/After-Sales/Helpdesk endpoints (spec section 11) ship
+    in their own phase alongside the Odoo services that back them.
+
+
+    Cross-cutting error contract for every customer-facing endpoint that reads
+    Odoo (Dashboard, Sales, Invoices, Delivery, Products, Helpdesk, AfterSales,
+    Equipment, Subscriptions, Analytics, Documents, Users): resolving the caller's
+    Odoo context can fail in three ways that are not specific to the endpoint --
+    `400 no_company_selected` (no company on the session), `403 no_identity_mapping`
+    (the account has no Odoo identity on that company's connection), and
+    `503 odoo_connection_unavailable` (the stored connection itself is failing --
+    credential rejected or Odoo unreachable). Endpoints backed by an optional Odoo
+    module add a fourth: `503 feature_unavailable`, when that module is simply not
+    installed on the connected Odoo (see GET /capabilities to discover this up front
+    rather than by failing). `odoo_connection_unavailable` is deliberately NOT the
+    `422 odoo_auth_failed` that the admin connection endpoints return: those speak
+    to an admin who just typed a credential, this one to a customer who can only be
+    told to contact their administrator. A connection that produces it is marked
+    `status: 'error'` with the underlying reason in `last_error`, so it surfaces on
+    the admin connection list without waiting for a manual Test Connection.
+servers:
+  - url: /api/v1
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Auth
+  - name: Users
+  - name: Roles
+  - name: Companies
+  - name: CustomerInfo
+  - name: OdooConnections
+  - name: AuditLogs
+  - name: Dashboard
+  - name: Sales
+  - name: Invoices
+  - name: Payment
+  - name: Delivery
+  - name: Requests
+  - name: Notifications
+  - name: Products
+  - name: Helpdesk
+  - name: AfterSales
+  - name: Equipment
+  - name: Subscriptions
+  - name: Analytics
+  - name: Assistant
+
+paths:
+  # ---------------------------------------------------------------- Auth
+  /auth/login:
+    post:
+      operationId: login
+      tags: [Auth]
+      summary: Authenticate with email and password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, format: password }
+      responses:
+        "200":
+          description: Login successful, or 2FA challenge issued
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/LoginResult"
+                  - $ref: "#/components/schemas/TwoFactorChallenge"
+        "401":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "423":
+          description: Account locked or disabled
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [Auth]
+      summary: Revoke the current session
+      responses:
+        "204": { description: Logged out }
+
+  /auth/refresh:
+    post:
+      operationId: refreshToken
+      tags: [Auth]
+      summary: Exchange a refresh token for a new access token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        "200":
+          description: New token pair issued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginResult" }
+        "401":
+          description: Refresh token invalid, expired or already rotated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /auth/2fa/enable:
+    post:
+      operationId: enableTwoFactor
+      tags: [Auth]
+      summary: Start 2FA enrollment for the current user
+      responses:
+        "200":
+          description: TOTP secret and QR code to scan
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  secret: { type: string }
+                  otpauth_url: { type: string }
+
+  /auth/2fa/verify:
+    post:
+      operationId: verifyTwoFactor
+      tags: [Auth]
+      summary: Confirm 2FA enrollment, or satisfy a login 2FA challenge
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [challenge_token, code]
+              properties:
+                challenge_token: { type: string, description: Returned by /auth/login or /auth/2fa/enable }
+                code: { type: string, example: "123456" }
+      responses:
+        "200":
+          description: 2FA verified, session issued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginResult" }
+        "401":
+          description: Invalid or expired code
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /auth/password/change:
+    post:
+      operationId: changePassword
+      tags: [Auth]
+      summary: Change password for the current user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password: { type: string, format: password }
+                new_password: { type: string, format: password }
+      responses:
+        "204": { description: Password updated }
+        "401":
+          description: Current password incorrect
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /auth/password/forgot:
+    post:
+      operationId: forgotPassword
+      tags: [Auth]
+      summary: Request a password reset token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        "202":
+          description: >
+            Always returned, whether or not the address is registered, so the endpoint cannot be
+            used to enumerate accounts. Delivering the token to the user (email) is out of scope
+            until the Notification service (section 29) ships.
+
+  /auth/password/reset:
+    post:
+      operationId: resetPassword
+      tags: [Auth]
+      summary: Set a new password using a reset or activation token
+      security: []
+      description: >
+        Consumes the token returned by /auth/password/forgot, or the activation_token returned
+        by POST /users when a Customer Admin creates a new portal user.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reset_token, new_password]
+              properties:
+                reset_token: { type: string }
+                new_password: { type: string, format: password, minLength: 8 }
+      responses:
+        "204": { description: "Password updated; account activated if it was pending" }
+        "401":
+          description: Token invalid or expired
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  # ---------------------------------------------------------- Passwordless email-OTP login
+  # (Docs/CR/customer_portal_passwordless_otp_login.md) -- additive alongside /auth/login above.
+  /auth/otp/request:
+    post:
+      operationId: requestOtpLogin
+      tags: [Auth]
+      summary: Request a one-time login code by email
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        "202":
+          description: >
+            Always returned, whether or not the address is registered, active, or currently
+            rate-limited, so the endpoint cannot be used to enumerate accounts.
+
+  /auth/otp/resend:
+    post:
+      operationId: resendOtpLogin
+      tags: [Auth]
+      summary: Resend a one-time login code, invalidating any previously issued code
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        "202":
+          description: Same contract as POST /auth/otp/request.
+
+  /auth/otp/verify:
+    post:
+      operationId: verifyOtpLogin
+      tags: [Auth]
+      summary: Verify a one-time login code and issue a session
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, otp]
+              properties:
+                email: { type: string, format: email }
+                otp: { type: string, example: "042917" }
+      responses:
+        "200":
+          description: Code verified, session issued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginResult" }
+        "401":
+          description: Invalid or expired code
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: Maximum verification attempts exceeded for this code
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  # ---------------------------------------------------------------- SSO (Phase 7, Google Workspace)
+  /auth/sso/google/start:
+    get:
+      operationId: startGoogleSso
+      tags: [Auth]
+      summary: Begin Google SSO -- redirects the browser to Google's consent screen
+      security: []
+      description: >
+        A full browser navigation (not a fetch call): the frontend should set
+        `window.location.href` to this URL, not call it via XHR/fetch.
+      responses:
+        "302": { description: Redirect to Google's OAuth consent screen }
+        "503":
+          description: Google SSO is not configured on this server
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /auth/sso/google/callback:
+    get:
+      operationId: googleSsoCallback
+      tags: [Auth]
+      summary: Google's OAuth redirect target
+      security: []
+      description: >
+        Never called directly by the frontend -- Google redirects the browser here after
+        consent. Always redirects onward to the frontend: to /sso/callback?code=... on success
+        (see POST /auth/sso/exchange), or to /login?sso_error=... on failure.
+      parameters:
+        - name: code
+          in: query
+          schema: { type: string }
+        - name: state
+          in: query
+          schema: { type: string }
+        - name: error
+          in: query
+          schema: { type: string }
+      responses:
+        "302": { description: "Redirect to the frontend, success or failure" }
+
+  /auth/sso/exchange:
+    post:
+      operationId: exchangeSsoCode
+      tags: [Auth]
+      summary: Exchange a one-time SSO code for a real session
+      security: []
+      description: >
+        Called by the frontend's /sso/callback page with the `code` query param the Google
+        callback redirect handed it. The code is single-use and expires after 60 seconds --
+        tokens themselves are never put in a URL or browser history.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginResult" }
+        "401":
+          description: Exchange code invalid or expired
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  # ---------------------------------------------------------------- Users
+  /users:
+    get:
+      operationId: listUsers
+      tags: [Users]
+      summary: List portal users for the current customer
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/PageSizeParam"
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/UserStatus" }
+      responses:
+        "200":
+          description: Paginated user list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/PortalUser" }
+                  meta: { $ref: "#/components/schemas/PageMeta" }
+    post:
+      operationId: createUser
+      tags: [Users]
+      summary: Create a portal user (requires user.create)
+      description: >
+        Validates odoo_partner_id against the given Odoo connection before creating the user
+        (section 22: identity must trace back to a real res.partner). No password is collected
+        here -- the response's activation_token is consumed by POST /auth/password/reset to set
+        the user's first password.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PortalUserCreate" }
+      responses:
+        "201":
+          description: User created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PortalUserCreated" }
+        "409":
+          description: Email already registered
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: role_ids, odoo_connection_id or odoo_partner_id do not resolve to real records
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /users/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+    get:
+      operationId: getUser
+      tags: [Users]
+      summary: Get a portal user (requires user.view)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PortalUser" }
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    patch:
+      operationId: updateUser
+      tags: [Users]
+      summary: Update a portal user's profile or roles
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PortalUserUpdate" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PortalUser" }
+    delete:
+      operationId: disableUser
+      tags: [Users]
+      summary: Disable a portal user (requires user.disable; soft delete -- status becomes 'disabled')
+      responses:
+        "204": { description: Disabled }
+
+  # ---------------------------------------------------------------- Roles
+  /roles:
+    get:
+      operationId: listRoles
+      tags: [Roles]
+      summary: List roles available to the current customer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Role" }
+    post:
+      operationId: createRole
+      tags: [Roles]
+      summary: Create a custom role
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                description: { type: string }
+                permission_codes:
+                  type: array
+                  items: { type: string }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Role" }
+
+  /roles/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+    get:
+      operationId: getRole
+      tags: [Roles]
+      summary: Get a role and its permissions
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Role" }
+    patch:
+      operationId: updateRole
+      tags: [Roles]
+      summary: Update a role's description or permission set
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                description: { type: string }
+                permission_codes:
+                  type: array
+                  items: { type: string }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Role" }
+    delete:
+      operationId: deleteRole
+      tags: [Roles]
+      summary: Delete a custom role (built-in roles cannot be deleted)
+      responses:
+        "204": { description: Deleted }
+        "409":
+          description: Role is a built-in role or still assigned to users
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /permissions:
+    get:
+      operationId: listPermissions
+      tags: [Roles]
+      summary: List all permission codes known to the system
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Permission" }
+
+  # ---------------------------------------------------------------- Companies
+  /companies:
+    get:
+      operationId: listCompanies
+      tags: [Companies]
+      summary: List companies the current user may switch into
+      description: >
+        CR-054: only companies whose Odoo connection is `status = 'connected'` -- the same status
+        an administrator sees on `/settings/odoo-connection`, so both screens answer from one
+        source. A connection that has never been reachable has no data to show; offering it only
+        moves the failure one click deeper.
+
+
+        Filtered on `status`, not `is_enabled` -- that distinction is the lesson of BUG-37. A
+        connection an administrator switched off but that is otherwise healthy stays listed (and
+        is refused with a reason when picked: `POST /companies/switch` answers
+        `503 odoo_connection_disabled`), while one proven unreachable disappears. Since CR-045
+        `status` is written by real customer traffic, so the list heals itself once Odoo is back.
+
+
+        Two guarantees the filter can never break: the company the session is currently seated on
+        is always included whatever its status (otherwise the SPA's `select` would name a company
+        the session is not in), and filtering never yields an empty array -- that renders as "No
+        company assigned", which reads as "an administrator never granted you one".
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Company" }
+
+  /companies/current:
+    get:
+      operationId: getCurrentCompany
+      tags: [Companies]
+      summary: Get the company active in the current session
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Company" }
+
+  /companies/switch:
+    post:
+      operationId: switchCompany
+      tags: [Companies]
+      summary: Switch the active company for the current session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [company_id]
+              properties:
+                company_id: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Active company updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Company" }
+        "403":
+          description: User is not authorized for this company
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: >
+            `odoo_connection_disabled` -- the company exists and the user is authorized for it,
+            but its Odoo connection is disabled (CR-047). Filtering the list is not enforcement:
+            a long-open SPA tab still holds the id from before the connection was switched off.
+            Same code and wording as the gate in `resolveIdentity`, so one situation never has
+            two explanations. The session is left untouched.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  # -------------------------------------------------------------------- Odoo capabilities
+  /capabilities:
+    get:
+      operationId: listCapabilities
+      tags: [Companies]
+      summary: Which optional Odoo modules the active company's connection actually has
+      description: >
+        Not every Odoo has every module the portal supports -- Helpdesk, Maintenance and
+        Subscriptions are separate installs, and Installed Base additionally needs the
+        `installed_base` addon's `customer_id` field. The SPA uses this to hide navigation for
+        features that cannot work, instead of letting the customer click into an endpoint that
+        can only answer `503 feature_unavailable`.
+
+
+        Deliberately never fails: every reason it could (no company selected, no identity
+        mapping, connection down) already has its own error on the endpoints that matter, and
+        a second error here would only duplicate it. When the context cannot be resolved it
+        answers with every feature `true`, which renders the full navigation -- the pre-CR-046
+        behaviour.
+      responses:
+        "200":
+          description: Feature name to availability. Detected from Odoo's own ir.model / ir.model.fields registry and cached per connection.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: { type: boolean }
+                example:
+                  helpdesk: false
+                  maintenance: false
+                  equipment: false
+                  subscriptions: true
+
+  # -------------------------------------------------------- Customer Information (CR sections 10-12)
+  /profile:
+    get:
+      operationId: getCompanyProfile
+      tags: [CustomerInfo]
+      summary: Get the authorized company's profile
+      description: Source is Odoo res.partner, filtered to id = session's authorized_partner_id (CR section 10).
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CompanyProfile" }
+
+  /addresses:
+    get:
+      operationId: listAddresses
+      tags: [CustomerInfo]
+      summary: List the authorized company's addresses
+      description: >
+        The authorized partner's own address plus any child billing/shipping/other addresses
+        (parent_id = authorized_partner_id, CR section 11).
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Address" } }
+
+  /contacts:
+    get:
+      operationId: listContacts
+      tags: [CustomerInfo]
+      summary: List the authorized company's contacts / PIC
+      description: Child contacts of the authorized partner (parent_id = authorized_partner_id, CR section 12).
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Contact" } }
+
+  # ---------------------------------------------------------------- Odoo Connections (admin)
+  /admin/odoo-connections:
+    get:
+      operationId: listOdooConnections
+      tags: [OdooConnections]
+      summary: List configured Odoo connections
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/OdooConnection" }
+    post:
+      operationId: createOdooConnection
+      tags: [OdooConnections]
+      summary: Save a verified Odoo connection
+      description: >
+        The credential is authenticated against Odoo before anything is written, so a stored
+        connection has always been verified at the moment it was stored -- there is no
+        create-then-test sequence any more, and a bad credential means no row at all (422).
+        `company_ids` is the "Select Company" step: every company discovered on the connection is
+        stored, but only the listed ones come back `is_active`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OdooConnectionCreate" }
+      responses:
+        "201":
+          description: Created with status 'connected' and its companies already synced
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/OdooConnection"
+                  - type: object
+                    properties:
+                      companies:
+                        type: array
+                        items: { $ref: "#/components/schemas/Company" }
+                      webhook_url:
+                        type: string
+                        description: Shown once, here and on webhook-secret/rotate only
+        "409":
+          description: >
+            connection_already_exists -- another connection already points at the same
+            URL + database + username. Edit that one instead; a duplicate row would split
+            users across two connections with independently rotting credentials.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: Odoo rejected the credential or could not be reached -- nothing was stored
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: Too many Odoo-touching config calls from this admin (burst limit)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /admin/odoo-connections/check-connection:
+    post:
+      operationId: checkOdooConnection
+      tags: [OdooConnections]
+      summary: Validate a credential against Odoo without saving anything
+      description: >
+        Drives the "Check Connection" step of the setup flow: reaches Odoo, resolves the database
+        name (asking the server itself, so the admin only has to supply URL/username/credential),
+        authenticates, and returns the res.company list to pick from -- all before any row exists.
+        Pass `connection_id` instead of `credential` to re-check a saved connection with its
+        stored credential; doing so also writes the outcome back to that row's
+        status/last_checked_at/last_error.
+
+
+        A 200 is not the same as "credential accepted": `status: 'database_required'` means the
+        server was reached but the database name could not be determined on its own (Odoo serves
+        several, or has `list_db = False`), so nothing has been authenticated yet.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OdooConnectionCheck" }
+      responses:
+        "200":
+          description: Odoo reached (see `status` for whether the credential was actually accepted)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OdooConnectionCheckResult" }
+        "422":
+          description: Odoo unreachable (odoo_unreachable) or credential rejected (odoo_auth_failed)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: Too many Odoo-touching config calls from this admin (burst limit)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /admin/odoo-connections/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+    get:
+      operationId: getOdooConnection
+      tags: [OdooConnections]
+      summary: Get an Odoo connection (credential is never returned)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OdooConnection" }
+    patch:
+      operationId: updateOdooConnection
+      tags: [OdooConnections]
+      summary: Update connection details or rotate the credential
+      description: >
+        Partial. A patch that touches url/database/username/credential is re-authenticated against
+        Odoo before it is written (same rule as create) and refreshes status/odoo_version/
+        last_checked_at on success; a patch that only renames or re-selects companies never
+        contacts Odoo, so it is not blocked by an Odoo that happens to be down.
+
+
+        url and database are immutable once the connection has any identity_mappings
+        (409 connection_target_locked). Odoo record ids are only meaningful inside one database,
+        so repointing a connection that customers are already mapped to would silently rebind
+        them to whichever records happen to hold the same ids in the new database. username and
+        credential stay editable -- they change who authenticates, not which id space is read.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OdooConnectionCreate" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OdooConnection" }
+        "409":
+          description: >
+            connection_already_exists -- the edited url/database/username would point at the
+            same Odoo target as another connection; or connection_target_locked -- url/database
+            cannot be moved because customers are already mapped to this connection.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: Odoo rejected the edited credential/target -- nothing was written
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      operationId: deleteOdooConnection
+      tags: [OdooConnections]
+      summary: Remove an Odoo connection
+      responses:
+        "204": { description: Deleted }
+        "409":
+          description: Connection still has mapped users
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /admin/odoo-connections/{id}/test-connection:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+    post:
+      operationId: testOdooConnection
+      tags: [OdooConnections]
+      summary: Call common.version() and authenticate() against Odoo to verify the connection
+      responses:
+        "200":
+          description: Connection reachable and credential valid
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [connected] }
+                  odoo_version: { type: string, example: "18.0" }
+        "422":
+          description: Connection failed (bad URL, database, credential, or plan does not expose External API)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /admin/odoo-connections/{id}/companies:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+    get:
+      operationId: listOdooConnectionCompanies
+      tags: [OdooConnections]
+      summary: List companies already synced for this connection (no live Odoo call)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Company" }
+
+  /admin/odoo-connections/{id}/sync-companies:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+    post:
+      operationId: syncOdooCompanies
+      tags: [OdooConnections]
+      summary: Fetch res.company records from Odoo and upsert them locally
+      description: >
+        With `company_ids` this re-runs the setup flow's "Select Company" step against an existing
+        connection: every discovered company is upserted, and only the listed ones stay
+        `is_active`. Without it (empty body) the sync only refreshes names/currencies and leaves
+        the current selection alone.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                company_ids:
+                  type: array
+                  items: { type: integer }
+                  description: res.company ids to keep active; omit to preserve the current selection
+      responses:
+        "200":
+          description: Companies synced
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Company" }
+
+  /admin/odoo-connections/{id}/sync-users:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+    post:
+      operationId: syncOdooUsers
+      tags: [OdooConnections]
+      summary: Bulk-provision portal_users for every existing Odoo "Portal" contact (res.users share=true)
+      description: >
+        Reuses the same idempotent provisioning logic as the Odoo webhook (see
+        /webhooks/odoo/{connectionId}/{secret}) -- safe to call repeatedly. Each item's `status` is
+        `provisioned` (new portal_user created), `already_provisioned` (identity_mapping already
+        existed), or `skipped_conflict` (the Odoo login/email belongs to a different existing
+        portal_user -- surfaced for manual review, never overwritten).
+      responses:
+        "200":
+          description: Sync attempted for every Odoo portal contact found
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    odoo_partner_id: { type: integer }
+                    email: { type: string }
+                    name: { type: string }
+                    status: { type: string, enum: [provisioned, already_provisioned, skipped_conflict, skipped_invalid_email] }
+                    user_id: { type: string, format: uuid }
+
+  /admin/odoo-connections/{id}/disable:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+    post:
+      operationId: disableOdooConnection
+      tags: [OdooConnections]
+      summary: Stop the portal from using this connection, without deleting it
+      description: >
+        Sets `is_enabled` to false. Every customer request resolving to this connection then fails
+        with `503 odoo_connection_disabled`, and admin actions that pull data from it
+        (sync-companies, sync-users, creating a user mapped to it) are refused; inbound webhooks
+        are acknowledged with `skipped_connection_disabled` instead of provisioning. Deliberately
+        NOT blocked by existing identity_mappings -- unlike DELETE, which is refused while any user
+        is mapped, so a connection with customers on it could otherwise never be taken out of
+        service. Makes no Odoo call: test-connection still works while disabled, which is how an
+        admin verifies a fix before enabling again. Independent of `status`, which the health
+        recorder keeps writing from real traffic.
+      responses:
+        "200":
+          description: Connection disabled
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OdooConnection" }
+        "404":
+          description: Connection not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /admin/odoo-connections/{id}/enable:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+    post:
+      operationId: enableOdooConnection
+      tags: [OdooConnections]
+      summary: Let the portal use this connection again
+      description: >
+        Sets `is_enabled` to true. Does not validate the credential -- enabling a connection whose
+        Odoo is currently down has to stay possible, or recovery would depend on an order the admin
+        cannot control. Provisioning events that arrived while it was disabled are not replayed;
+        run sync-users once afterwards to catch up.
+      responses:
+        "200":
+          description: Connection enabled
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OdooConnection" }
+        "404":
+          description: Connection not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  # ---------------------------------------------------------------- Audit Log
+  /audit-logs:
+    get:
+      operationId: listAuditLogs
+      tags: [AuditLogs]
+      summary: Query the audit log
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/PageSizeParam"
+        - name: actor_user_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: action
+          in: query
+          schema: { type: string, example: auth.login }
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: Paginated audit log entries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/AuditLogEntry" }
+                  meta: { $ref: "#/components/schemas/PageMeta" }
+
+  # ---------------------------------------------------------------- Dashboard (Phase 2)
+  /dashboard/summary:
+    get:
+      operationId: getDashboardSummary
+      tags: [Dashboard]
+      summary: Quotation/order/invoice counts and outstanding balance for the current company
+      description: >
+        `tickets` is always null until Helpdesk ships in Phase 5 -- the spec's dashboard mockup
+        (section 30) assumes it exists, this endpoint does not fake a zero in its place.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DashboardSummary" }
+
+  # ---------------------------------------------------------------- Quotations (Phase 2)
+  /quotations:
+    get:
+      operationId: listQuotations
+      tags: [Sales]
+      summary: List quotations (sale.order in draft/sent) for the current company
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/SalesOrder" } }
+
+  /quotations/{id}:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    get:
+      operationId: getQuotation
+      tags: [Sales]
+      summary: Get a quotation
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SalesOrder" }
+        "404":
+          description: Not found (including a quotation that belongs to a different customer)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /quotations/{id}/pdf:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    get:
+      operationId: downloadQuotationPdf
+      tags: [Sales]
+      summary: Download the quotation as a PDF, rendered by Odoo's own sale.order report
+      description: >
+        Streams the exact PDF Odoo's own web client/portal "Print" action produces for this
+        sale.order (same report as the Sales Orders one below -- Odoo uses one QWeb report for
+        both quotation and order states).
+      responses:
+        "200":
+          description: Binary PDF content
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+
+  /quotations/{id}/approve:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    post:
+      operationId: approveQuotation
+      tags: [Sales]
+      summary: Approve a quotation (calls sale.order.action_confirm)
+      responses:
+        "200":
+          description: Confirmed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SalesOrder" }
+
+  /quotations/{id}/reject:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    post:
+      operationId: rejectQuotation
+      tags: [Sales]
+      summary: Reject a quotation
+      description: >
+        Recorded as a chatter note on the sale.order (visible to the sales team in Odoo) rather
+        than a state transition -- Odoo has no universal "customer rejected" state without a
+        custom module. Verify this matches the target Odoo's own portal decline behavior.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, maxLength: 500 }
+      responses:
+        "200":
+          description: Rejection recorded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SalesOrder" }
+
+  /quotations/{id}/sign:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    post:
+      operationId: signQuotation
+      tags: [Sales]
+      summary: E-sign and confirm a quotation
+      description: >
+        Writes to sale.order's own signature/signed_by/signed_on fields -- the same fields
+        Odoo's built-in customer portal uses for "Accept & Sign" (native since Odoo 12, no
+        separate Sign app required). Signing also confirms the order (action_confirm), the same
+        as POST /quotations/{id}/approve.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [signature, signed_by]
+              properties:
+                signature:
+                  type: string
+                  description: "PNG signature as base64, with or without a data: URI prefix"
+                signed_by: { type: string, maxLength: 150 }
+      responses:
+        "200":
+          description: Signed and confirmed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SalesOrder" }
+
+  /quotations/{id}/lines:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    get:
+      operationId: listQuotationLines
+      tags: [Sales]
+      summary: List the sale.order.line rows (products purchased) on this quotation
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/OrderLine" } }
+
+  /quotations/{id}/messages:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    get:
+      operationId: listQuotationMessages
+      tags: [Sales]
+      summary: List the quotation's communication history (sale.order chatter, customer-visible only)
+      description: >
+        Reads sale.order's own mail.message thread, filtered to is_internal=false so internal
+        sales-team notes never reach the customer.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/ChatterMessage" } }
+    post:
+      operationId: postQuotationMessage
+      tags: [Sales]
+      summary: Post a comment onto the quotation's communication history
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string, maxLength: 5000 }
+      responses:
+        "201":
+          description: Comment posted; returns the full updated thread
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/ChatterMessage" } }
+
+  /quotations/{id}/documents:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    get:
+      operationId: listQuotationDocuments
+      tags: [Sales]
+      summary: List attachments on this quotation
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/DocumentEntry" } }
+
+  /quotations/{id}/documents/{attachmentId}:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+      - $ref: "#/components/parameters/AttachmentIdParam"
+    get:
+      operationId: downloadQuotationDocument
+      tags: [Sales]
+      summary: Download one attachment
+      responses:
+        "200":
+          description: Binary file content
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+
+  # ---------------------------------------------------------------- Sales Orders (Phase 2)
+  /orders:
+    get:
+      operationId: listOrders
+      tags: [Sales]
+      summary: List confirmed sales orders (sale.order in sale/done) for the current company
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/SalesOrder" } }
+
+  /orders/{id}:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    get:
+      operationId: getOrder
+      tags: [Sales]
+      summary: Get a sales order
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SalesOrder" }
+
+  /orders/{id}/pdf:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    get:
+      operationId: downloadOrderPdf
+      tags: [Sales]
+      summary: Download the order as a PDF, rendered by Odoo's own sale.order report
+      description: >
+        Streams the exact PDF Odoo's own web client/portal "Print" action produces for this
+        sale.order (same report as the Quotations one above).
+      responses:
+        "200":
+          description: Binary PDF content
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+
+  /orders/{id}/reorder:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    post:
+      operationId: reorderOrder
+      tags: [Sales]
+      summary: Duplicate a past order into a new draft quotation (sale.order.copy())
+      responses:
+        "201":
+          description: New draft quotation created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SalesOrder" }
+
+  /orders/{id}/lines:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    get:
+      operationId: listOrderLines
+      tags: [Sales]
+      summary: List the sale.order.line rows (products purchased) on this order
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/OrderLine" } }
+
+  /orders/{id}/messages:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    get:
+      operationId: listOrderMessages
+      tags: [Sales]
+      summary: List the order's communication history (sale.order chatter, customer-visible only)
+      description: >
+        Reads sale.order's own mail.message thread, filtered to is_internal=false so internal
+        sales-team notes never reach the customer.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/ChatterMessage" } }
+    post:
+      operationId: postOrderMessage
+      tags: [Sales]
+      summary: Post a comment onto the order's communication history
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string, maxLength: 5000 }
+      responses:
+        "201":
+          description: Comment posted; returns the full updated thread
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/ChatterMessage" } }
+
+  /orders/{id}/documents:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    get:
+      operationId: listOrderDocuments
+      tags: [Sales]
+      summary: List attachments on this order
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/DocumentEntry" } }
+
+  /orders/{id}/documents/{attachmentId}:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+      - $ref: "#/components/parameters/AttachmentIdParam"
+    get:
+      operationId: downloadOrderDocument
+      tags: [Sales]
+      summary: Download one attachment
+      responses:
+        "200":
+          description: Binary file content
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+
+  # ---------------------------------------------------------------- Invoices (Phase 2-3)
+  /invoices:
+    get:
+      operationId: listInvoices
+      tags: [Invoices]
+      summary: List posted customer invoices for the current company
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Invoice" } }
+
+  /invoices/outstanding:
+    get:
+      operationId: getOutstanding
+      tags: [Invoices]
+      summary: Aggregate outstanding balance across not-fully-paid invoices
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OutstandingSummary" }
+
+  /invoices/{id}:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    get:
+      operationId: getInvoice
+      tags: [Invoices]
+      summary: Get an invoice
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Invoice" }
+
+  /invoices/{id}/pdf:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    get:
+      operationId: getInvoicePdf
+      tags: [Invoices]
+      summary: Download the invoice PDF
+      description: >
+        Streams the most recently attached PDF (ir.attachment) on the invoice rather than
+        regenerating a report live -- Odoo normally auto-attaches the PDF when an invoice is
+        posted/sent. Returns 404 if Odoo hasn't generated one yet.
+      responses:
+        "200":
+          description: PDF content
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+        "404":
+          description: No PDF attached to this invoice in Odoo yet
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /invoices/{id}/documents:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    get:
+      operationId: listInvoiceDocuments
+      tags: [Invoices]
+      summary: List all attachments on this invoice (not just the PDF)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/DocumentEntry" } }
+
+  /invoices/{id}/documents/{attachmentId}:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+      - $ref: "#/components/parameters/AttachmentIdParam"
+    get:
+      operationId: downloadInvoiceDocument
+      tags: [Invoices]
+      summary: Download one attachment
+      responses:
+        "200":
+          description: Binary file content
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+
+  /invoices/{id}/pay:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    post:
+      operationId: createInvoicePaymentLink
+      tags: [Payment]
+      summary: Get a redirect URL to Odoo's own hosted payment page for this invoice
+      description: >
+        Uses Odoo's built-in payment.link.wizard (Payment Link feature) instead of a
+        custom-built payment engine (section 28) -- Odoo already knows which providers are
+        enabled for the company and handles the actual checkout.
+      responses:
+        "200":
+          description: Payment link
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url: { type: string, format: uri }
+
+  /invoices/{id}/payment-proof:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    get:
+      operationId: listPaymentProofs
+      tags: [Payment]
+      summary: List payment proofs submitted for this invoice
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/PaymentProof" } }
+    post:
+      operationId: uploadPaymentProof
+      tags: [Payment]
+      summary: Upload a manual/bank-transfer payment proof (multipart)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+                amount: { type: number }
+      responses:
+        "201":
+          description: Proof recorded, pending review
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaymentProof" }
+
+  # ---------------------------------------------------------------- Deliveries (Phase 4)
+  /deliveries:
+    get:
+      operationId: listDeliveries
+      tags: [Delivery]
+      summary: List outgoing deliveries (stock.picking) for the current company
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Delivery" } }
+
+  /deliveries/{id}:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    get:
+      operationId: getDelivery
+      tags: [Delivery]
+      summary: Get a delivery
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Delivery" }
+
+  /deliveries/{id}/tracking:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    get:
+      operationId: getDeliveryTracking
+      tags: [Delivery]
+      summary: Get tracking status for a delivery
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: integer }
+                  status: { type: string, example: Shipped }
+                  scheduled_date: { type: string, format: date-time, nullable: true }
+                  date_done: { type: string, format: date-time, nullable: true }
+                  carrier_tracking_ref: { type: string, nullable: true }
+
+  /deliveries/{id}/confirm:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    post:
+      operationId: confirmDelivery
+      tags: [Delivery]
+      summary: Confirm receipt of a delivery (POD), optionally with a signature/photo (multipart)
+      description: >
+        Pushed to Odoo as a chatter note on the stock.picking. If that push fails, the
+        confirmation is still recorded locally (odoo_synced_at stays null) rather than failing
+        the customer-facing action.
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                notes: { type: string, maxLength: 1000 }
+                signature: { type: string, format: binary }
+      responses:
+        "201":
+          description: Confirmed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeliveryConfirmation" }
+
+  /deliveries/{id}/documents:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    get:
+      operationId: listDeliveryDocuments
+      tags: [Delivery]
+      summary: List attachments on this delivery
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/DocumentEntry" } }
+
+  /deliveries/{id}/documents/{attachmentId}:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+      - $ref: "#/components/parameters/AttachmentIdParam"
+    get:
+      operationId: downloadDeliveryDocument
+      tags: [Delivery]
+      summary: Download one attachment
+      responses:
+        "200":
+          description: Binary file content
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+
+  # ---------------------------------------------------------------- Requests (Phase 2)
+  /requests:
+    get:
+      operationId: listCustomerRequests
+      tags: [Requests]
+      summary: List the current user's product/quotation requests
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/CustomerRequest" } }
+    post:
+      operationId: createCustomerRequest
+      tags: [Requests]
+      summary: Submit a "Request Product" or "Request Quotation" (section 13)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, payload]
+              properties:
+                type: { type: string, enum: [request_product, request_quotation] }
+                payload: { type: object, additionalProperties: true }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomerRequest" }
+
+  # ---------------------------------------------------------------- Notifications (Phase 2)
+  /notifications:
+    get:
+      operationId: listNotifications
+      tags: [Notifications]
+      summary: List the current user's in-app notifications
+      description: >
+        Phase 7's Real-time Notification, built the way section 21 frames the initial stage:
+        each call also does a throttled (max once per 30s per company) check for Odoo-side
+        changes (invoice paid, delivery completed, ticket updated) since the last check, and
+        creates notifications for any found. The frontend polls this endpoint every 30-60s
+        rather than the backend running an unconditional background job against Odoo.
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/PageSizeParam"
+        - name: unread_only
+          in: query
+          schema: { type: boolean }
+      responses:
+        "200":
+          description: Paginated notifications
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Notification" }
+                  meta:
+                    allOf:
+                      - $ref: "#/components/schemas/PageMeta"
+                      - type: object
+                        properties:
+                          unread: { type: integer }
+
+  /notifications/{id}/read:
+    post:
+      operationId: markNotificationRead
+      tags: [Notifications]
+      summary: Mark one notification as read
+      parameters:
+        - $ref: "#/components/parameters/IdParam"
+      responses:
+        "204": { description: Marked read }
+
+  /notifications/read-all:
+    post:
+      operationId: markAllNotificationsRead
+      tags: [Notifications]
+      summary: Mark all of the current user's notifications as read
+      responses:
+        "204": { description: Marked read }
+
+  # ---------------------------------------------------------------- Products (Phase 2)
+  /products:
+    get:
+      operationId: listProducts
+      tags: [Products]
+      summary: List the sellable product catalog for the current company
+      description: >
+        Prices are Odoo's standard list_price -- customer-specific pricelist computation is not
+        implemented (see productService.js for why), so this is not necessarily what the
+        customer would actually be charged.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Product" } }
+
+  /products/purchase-history:
+    get:
+      operationId: getPurchaseHistory
+      tags: [Products]
+      summary: List past purchased order lines for the current user's partner/company
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/PurchaseHistoryLine" } }
+
+  /products/reorder-suggestions:
+    get:
+      operationId: getReorderSuggestions
+      tags: [Products]
+      summary: Products this customer has ordered before, ranked by frequency
+      description: >
+        Phase 7's "Recommendation", scoped honestly: aggregated from the same purchase history
+        as GET /products/purchase-history, ranked by order_count -- not a similarity or
+        collaborative-filtering engine.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/ReorderSuggestion" } }
+
+  # ---------------------------------------------------------------- Helpdesk (Phase 5)
+  /tickets:
+    get:
+      operationId: listTickets
+      tags: [Helpdesk]
+      summary: List helpdesk tickets for the current company
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Ticket" } }
+    post:
+      operationId: createTicket
+      tags: [Helpdesk]
+      summary: Create a helpdesk ticket
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 200 }
+                description: { type: string, maxLength: 10000, description: "May contain a small sanitized HTML subset (p, br, strong, em, u, s, ul, ol, li, a) -- see src/utils/sanitizeHtml.js" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ticket" }
+
+  /tickets/{id}:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    get:
+      operationId: getTicket
+      tags: [Helpdesk]
+      summary: Get a ticket
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ticket" }
+
+  /tickets/{id}/reply:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    post:
+      operationId: replyTicket
+      tags: [Helpdesk]
+      summary: Post a reply on the ticket (message_post -- shows in Odoo's chatter)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string, maxLength: 10000, description: "May contain a small sanitized HTML subset -- see src/utils/sanitizeHtml.js" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ticket" }
+
+  /tickets/{id}/messages:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    get:
+      operationId: listTicketMessages
+      tags: [Helpdesk]
+      summary: List the ticket's communication history (helpdesk.ticket chatter, customer-visible only)
+      description: >
+        Reads helpdesk.ticket's own mail.message thread, filtered to is_internal=false so internal
+        agent notes never reach the customer.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/ChatterMessage" } }
+    post:
+      operationId: postTicketMessage
+      tags: [Helpdesk]
+      summary: Post a comment onto the ticket's communication history
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string, maxLength: 10000, description: "May contain a small sanitized HTML subset -- see src/utils/sanitizeHtml.js" }
+      responses:
+        "201":
+          description: Comment posted; returns the full updated thread
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/ChatterMessage" } }
+
+  /tickets/{id}/attachments:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    post:
+      operationId: uploadTicketAttachment
+      tags: [Helpdesk]
+      summary: Attach a file directly to the ticket in Odoo (multipart)
+      description: >
+        Pushed straight into Odoo as an ir.attachment (base64) rather than kept on local disk --
+        unlike payment proofs / delivery signatures, a support agent needs to see this file in
+        Odoo itself, not just have the portal keep a copy.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "201":
+          description: Attached
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ticket" }
+
+  /tickets/{id}/close:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    post:
+      operationId: closeTicket
+      tags: [Helpdesk]
+      summary: Close a ticket
+      description: >
+        Moves the ticket to any helpdesk.stage with fold=true (the "folded in Kanban" boolean
+        Odoo uses for done/closed-style stages -- there is no is_close field in Odoo 18
+        Enterprise, verified live) -- not necessarily the correct stage for the ticket's specific
+        team, since team-specific stage setup varies too much to resolve generically.
+      responses:
+        "200":
+          description: Closed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ticket" }
+        "502":
+          description: No closing stage is configured in Odoo Helpdesk
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /tickets/{id}/reopen:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    post:
+      operationId: reopenTicket
+      tags: [Helpdesk]
+      summary: Reopen a ticket
+      responses:
+        "200":
+          description: Reopened
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ticket" }
+
+  /tickets/{id}/documents:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    get:
+      operationId: listTicketDocuments
+      tags: [Helpdesk]
+      summary: List attachments on this ticket
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/DocumentEntry" } }
+
+  /tickets/{id}/documents/{attachmentId}:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+      - $ref: "#/components/parameters/AttachmentIdParam"
+    get:
+      operationId: downloadTicketDocument
+      tags: [Helpdesk]
+      summary: Download one attachment
+      responses:
+        "200":
+          description: Binary file content
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+
+  # ---------------------------------------------------------------- RMA & Warranty (Phase 5, stopgap)
+  /rma:
+    get:
+      operationId: listRma
+      tags: [AfterSales]
+      summary: List the current user's RMA requests
+      description: >
+        No dedicated Odoo model exists for RMA (section 27 needs a custom addon). Each request
+        is stored here and mirrored as a helpdesk.ticket; `status` is always read live from that
+        ticket's stage, never cached, so it reflects whatever staff actually did in Odoo.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/RmaRequest" } }
+    post:
+      operationId: createRma
+      tags: [AfterSales]
+      summary: Submit an RMA request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason, requested_action]
+              properties:
+                order_id: { type: integer, description: "sale.order id this concerns, if any" }
+                reason: { type: string, maxLength: 6000, description: "May contain a small sanitized HTML subset -- see src/utils/sanitizeHtml.js" }
+                requested_action: { type: string, enum: [refund, replacement] }
+      responses:
+        "201":
+          description: Created (also creates a linked helpdesk.ticket)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RmaRequest" }
+
+  /rma/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+    get:
+      operationId: getRma
+      tags: [AfterSales]
+      summary: Get an RMA request (status read live from its linked ticket)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RmaRequest" }
+
+  /warranty/lookup-serial:
+    get:
+      operationId: lookupWarrantySerial
+      tags: [AfterSales]
+      summary: Look up a serial number in Odoo inventory (stock.lot)
+      description: >
+        Confirms the serial exists in inventory records only -- does NOT verify this customer
+        purchased that unit, and does NOT compute warranty-period eligibility (no universal
+        field for that exists without a dedicated Odoo module). Staff verify actual eligibility
+        once the linked ticket reaches them.
+      parameters:
+        - name: serial
+          in: query
+          required: true
+          schema: { type: string, maxLength: 100 }
+      responses:
+        "200":
+          description: The matching stock.lot, or null if not found
+          content:
+            application/json:
+              schema:
+                type: object
+                nullable: true
+                properties:
+                  id: { type: integer }
+                  name: { type: string }
+                  product_id: { type: array, items: {}, example: [42, "Widget A"] }
+
+  /warranty:
+    get:
+      operationId: listWarrantyClaims
+      tags: [AfterSales]
+      summary: List the current user's warranty claims
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/WarrantyClaim" } }
+    post:
+      operationId: createWarrantyClaim
+      tags: [AfterSales]
+      summary: Submit a warranty claim
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [serial_number, issue_description]
+              properties:
+                serial_number: { type: string, maxLength: 100 }
+                issue_description: { type: string, maxLength: 6000, description: "May contain a small sanitized HTML subset -- see src/utils/sanitizeHtml.js" }
+      responses:
+        "201":
+          description: Created (also creates a linked helpdesk.ticket)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WarrantyClaim" }
+
+  /warranty/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IdParam"
+    get:
+      operationId: getWarrantyClaim
+      tags: [AfterSales]
+      summary: Get a warranty claim (status read live from its linked ticket)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WarrantyClaim" }
+
+  # ---------------------------------------------------------------- Schedule Maintenance (CR)
+  /maintenance:
+    get:
+      operationId: listMaintenanceRequests
+      tags: [AfterSales]
+      summary: List the current user's maintenance.request records
+      description: >
+        Read-only. maintenance.request has no partner_id -- this Odoo instance links a request to
+        the customer via a Studio field (x_studio_customer) instead, locked server-side the same
+        way every other domain is locked to partner_id/company_id (CLAUDE.md rule 2).
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/MaintenanceRequest" } }
+
+  /maintenance/{id}:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    get:
+      operationId: getMaintenanceRequest
+      tags: [AfterSales]
+      summary: Get a single maintenance.request
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaintenanceRequest" }
+
+  # ---------------------------------------------------------------- Equipment / Installed Base (CR
+  # Docs/CR/customer_population_installed_base.md, Fase 1: L1 registry only -- component tree
+  # (L2/L3), /parts, /due-replacements and /corrections ship in later phases of that CR).
+  /equipment:
+    get:
+      operationId: listEquipment
+      tags: [Equipment]
+      summary: List the current customer's owned machines (L1 units)
+      description: >
+        Read-only. Scoped server-side to the whole commercial partner family (D-4), not just the
+        single partner the logged-in user maps to -- a unit physically sits at a delivery address,
+        which in Odoo is a partner child of the commercial entity, so an exact-partner match would
+        return an empty list for most customers. Never accepts a partner/company id from the
+        request (IB-1).
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/EquipmentUnit" } }
+        "503":
+          description: >
+            Installed base isn't set up on this Odoo connection (required addon fields missing --
+            IB-5/section 15.3). Degrades cleanly instead of surfacing a raw Odoo error.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /equipment/{id}:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    get:
+      operationId: getEquipment
+      tags: [Equipment]
+      summary: Get a single owned machine, with its components if any
+      description: >
+        A unit owned by a different customer returns 404, never 403 (IB-2), so a unit's existence
+        can't be probed. `components` is the L2/L3 child equipment tree (CR section 5) -- empty
+        until Fase 3, or for machines with no serviceable sub-parts.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EquipmentUnit" }
+        "503":
+          description: Installed base isn't set up on this Odoo connection (IB-5/section 15.3)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /equipment/{id}/parts:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    get:
+      operationId: getEquipmentParts
+      tags: [Equipment]
+      summary: Compatible service parts and due-replacement status for one unit (Fase 2, CR section 9)
+      description: >
+        Same deterministic due-replacement engine as GET /equipment/due-replacements, scoped to
+        one unit. Empty array if the service catalog has no part compatible with this unit's model
+        or category -- not an error (section 15.3).
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/DueReplacementRow" } }
+        "503":
+          description: Installed base isn't set up on this Odoo connection (IB-5/section 15.3)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /equipment/due-replacements:
+    get:
+      operationId: getDueReplacements
+      tags: [Equipment]
+      summary: Fleet-wide due/overdue service parts (Fase 2, CR section 9)
+      description: >
+        Deterministic recommendation engine, not ML -- every row carries `basis` and `attribution`
+        (IB-4), because a part bought once for a customer with several identical units can't be
+        traced to one specific unit (D-5). Rate-limited per user (section 15.2, in-memory,
+        per-process -- not accurate if the backend is scaled to multiple instances).
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/DueReplacementRow" } }
+        "429":
+          description: Rate limited
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: Installed base isn't set up on this Odoo connection (IB-5/section 15.3)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /equipment/{id}/service-history:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    get:
+      operationId: getEquipmentServiceHistory
+      tags: [Equipment]
+      summary: maintenance.request history for one unit and its components (Fase 3)
+      description: >
+        Only maintenance.request is included -- neither helpdesk.ticket nor warranty_claims
+        carries an equipment reference field, so correlating them here would mean guessing a
+        match instead of reading a real one.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/EquipmentServiceHistoryEntry" } }
+        "503":
+          description: Installed base isn't set up on this Odoo connection (IB-5/section 15.3)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /equipment/corrections:
+    get:
+      operationId: listEquipmentCorrections
+      tags: [Equipment]
+      summary: List the current user's equipment data-correction requests (Fase 4)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/EquipmentCorrection" } }
+        "503":
+          description: Installed base isn't set up on this Odoo connection (IB-5/section 15.3)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    post:
+      operationId: createEquipmentCorrection
+      tags: [Equipment]
+      summary: Submit an equipment data-correction request (Fase 4)
+      description: >
+        Same stopgap pattern as RMA/warranty (no dedicated Odoo model): creates a helpdesk.ticket
+        and a local audit row. `equipment_id` lives in the body (not a URL path param) so the same
+        schema also serves the assistant's draft_equipment_correction tool, whose confirm step has
+        no route param to draw it from.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [equipment_id, correction_type, proposed_value]
+              properties:
+                equipment_id: { type: integer }
+                correction_type: { type: string, enum: [location, status, runtime_hours, ownership, other] }
+                proposed_value: { type: string, maxLength: 2000 }
+                note: { type: string, maxLength: 2000 }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EquipmentCorrection" }
+        "503":
+          description: Installed base isn't set up on this Odoo connection (IB-5/section 15.3)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  # ---------------------------------------------------------------- Contract & Subscription (Phase 6)
+  /subscriptions:
+    get:
+      operationId: listSubscriptions
+      tags: [Subscriptions]
+      summary: List subscriptions (sale.order with is_subscription=true) for the current company
+      description: >
+        "Contract" and "Subscription" (spec section 31) are treated as the same underlying
+        record here -- Odoo 17/18 merged Subscriptions into the Sales app, and section 19 itself
+        only describes one workflow (Active/Expiring/Renew/Upgrade/Downgrade/Close) for both.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Subscription" } }
+
+  /subscriptions/{id}:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    get:
+      operationId: getSubscription
+      tags: [Subscriptions]
+      summary: Get a subscription
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Subscription" }
+
+  /subscriptions/{id}/renew:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    post:
+      operationId: requestSubscriptionRenew
+      tags: [Subscriptions]
+      summary: Request a renewal
+      description: >
+        Per section 19 ("Portal hanya menyediakan customer interaction"), this records the
+        request as a chatter note on the subscription rather than executing a version-specific
+        renewal method directly against a live recurring contract -- the actual renewal/billing
+        mutation is handled by the account team or Odoo's own automation.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string, maxLength: 1000 }
+      responses:
+        "200":
+          description: Request recorded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Subscription" }
+
+  /subscriptions/{id}/upgrade:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    post:
+      operationId: requestSubscriptionUpgrade
+      tags: [Subscriptions]
+      summary: Request an upgrade (same request-recording behavior as /renew)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string, maxLength: 1000 }
+      responses:
+        "200":
+          description: Request recorded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Subscription" }
+
+  /subscriptions/{id}/downgrade:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    post:
+      operationId: requestSubscriptionDowngrade
+      tags: [Subscriptions]
+      summary: Request a downgrade (same request-recording behavior as /renew)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string, maxLength: 1000 }
+      responses:
+        "200":
+          description: Request recorded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Subscription" }
+
+  /subscriptions/{id}/close:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    post:
+      operationId: requestSubscriptionClose
+      tags: [Subscriptions]
+      summary: Request closure (same request-recording behavior as /renew)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string, maxLength: 1000 }
+      responses:
+        "200":
+          description: Request recorded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Subscription" }
+
+  /subscriptions/{id}/documents:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+    get:
+      operationId: listSubscriptionDocuments
+      tags: [Subscriptions]
+      summary: List attachments on this subscription
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/DocumentEntry" } }
+
+  /subscriptions/{id}/documents/{attachmentId}:
+    parameters:
+      - $ref: "#/components/parameters/OdooIdParam"
+      - $ref: "#/components/parameters/AttachmentIdParam"
+    get:
+      operationId: downloadSubscriptionDocument
+      tags: [Subscriptions]
+      summary: Download one attachment
+      responses:
+        "200":
+          description: Binary file content
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+
+  # ---------------------------------------------------------------- Analytics (Phase 7)
+  /analytics/spending-trend:
+    get:
+      operationId: getSpendingTrend
+      tags: [Analytics]
+      summary: Posted invoice totals grouped by month
+      description: >
+        Aggregated server-side in Odoo via read_group, not summed client-side. Piggybacks on
+        invoice.view rather than a new permission -- this is a rollup of data the caller can
+        already see individually.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/TrendPoint" } }
+
+  /analytics/order-volume-trend:
+    get:
+      operationId: getOrderVolumeTrend
+      tags: [Analytics]
+      summary: Confirmed sales order totals grouped by month
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/TrendPoint" } }
+
+  /assistant/config:
+    get:
+      operationId: assistantConfig
+      tags: [Assistant]
+      summary: >
+        Safe client-side subset of the assistant configuration (spec section 6.3). Never returns
+        provider, model, prompts, or API keys -- those are backend-only. Responds 200 with
+        `enabled: false` (not an error status) when the assistant is off, so the widget can enter
+        its degraded mode instead of rendering an error.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: { type: boolean }
+                  locales: { type: array, items: { type: string } }
+                  default_locale: { type: string, nullable: true }
+                  starters: { type: array, items: { type: string } }
+        "403":
+          description: Missing the assistant.use permission
+
+  /assistant/chat:
+    post:
+      operationId: assistantChat
+      tags: [Assistant]
+      summary: >
+        Send a message to the AI portal assistant (Docs/CR/customer_portal_ai_assistant.md).
+        Phase 1: responds with an SSE stream, and conversation history is persisted server-side --
+        the client sends conversation_id, never its own history array. Client-supplied history is
+        client-forgeable history, and would be a direct path for injecting fake "tool results"
+        into the model's context.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                conversation_id: { type: string, format: uuid }
+                message: { type: string, minLength: 1, maxLength: 2000 }
+                locale: { type: string, enum: [id, en] }
+                route: { type: string, maxLength: 200 }
+      responses:
+        "200":
+          description: >
+            text/event-stream. Event contract (spec section 10.3):
+            token {delta} is a chunk of the answer text;
+            reset {} means discard the text streamed so far this turn, because it preceded a tool
+            call and has not yet passed the "no tool result, no numbers" check (I-4);
+            tool_call {name} means a tool is running;
+            card {type, ref} renders a deterministic data card, where ref holds record ids and
+            never the data itself;
+            done {message_id, conversation_id, user_message_id, content} ends the turn;
+            error {code, message} reports a failure after the stream already began.
+
+            SSE headers are written lazily, on the first event -- so failures that happen before
+            the first token (rate limit, missing config, no company selected) are still returned
+            as ordinary JSON errors with their real status code, not as 200 plus an error event.
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "400":
+          description: No company selected on the session (code no_company_selected)
+        "403":
+          description: Missing the assistant.use permission
+        "429":
+          description: >
+            Portal-side limit hit: daily quota or per-minute burst (code rate_limited). Also
+            returned when the upstream provider throttles us (assistant_rate_limited) -- that one
+            does NOT count toward the circuit breaker, since the provider is healthy.
+        "502":
+          description: >
+            The provider answered with an error that is not transient -- a bad model name or a
+            malformed request (code assistant_provider_error). The upstream response body is
+            logged server-side, never returned to the caller.
+        "503":
+          description: >
+            Assistant disabled or not configured (assistant_not_configured); the provider is
+            temporarily overloaded (assistant_overloaded -- upstream 502/503/529, worth retrying);
+            the provider did not answer in time (assistant_timeout); or the circuit breaker has
+            opened after repeated failures (assistant_unavailable). Only assistant_unavailable and
+            assistant_not_configured put the widget into its degraded mode -- the other two get a
+            retry button, because a single transient failure is not a reason to take the assistant
+            away for the rest of the session.
+
+  /assistant/conversations:
+    get:
+      operationId: listAssistantConversations
+      tags: [Assistant]
+      summary: The caller's own conversations, scoped to the active Odoo connection
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: string, format: uuid }
+                    locale: { type: string }
+                    title: { type: string, nullable: true }
+                    created_at: { type: string, format: date-time }
+                    last_message_at: { type: string, format: date-time }
+
+  /assistant/conversations/{id}:
+    parameters: [{ $ref: "#/components/parameters/IdParam" }]
+    get:
+      operationId: getAssistantConversation
+      tags: [Assistant]
+      summary: >
+        Messages in one conversation. Role "tool" rows are not returned as messages -- their only
+        user-facing part is the card, and tool_summary is text written for the model, not a human.
+        Cards carry record refs, so their numbers are re-fetched from the real modules on render.
+      responses:
+        "200":
+          description: OK
+        "404":
+          description: Not found, or not the caller's conversation (deliberately indistinguishable)
+    delete:
+      operationId: deleteAssistantConversation
+      tags: [Assistant]
+      summary: Permanently delete a conversation (user privacy control -- a hard delete, not a flag)
+      responses:
+        "204": { description: Deleted }
+        "404": { description: Not found }
+
+  /assistant/messages/{id}/feedback:
+    parameters: [{ $ref: "#/components/parameters/IdParam" }]
+    post:
+      operationId: assistantFeedback
+      tags: [Assistant]
+      summary: Rate one assistant message. One rating per message; re-rating replaces it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rating]
+              properties:
+                rating: { type: integer, enum: [1, -1] }
+                reason: { type: string, maxLength: 1000 }
+      responses:
+        "200": { description: OK }
+        "404": { description: Message not found, or not in the caller's own conversation }
+
+  /assistant/drafts/{id}:
+    parameters: [{ $ref: "#/components/parameters/IdParam" }]
+    patch:
+      operationId: updateAssistantDraft
+      tags: [Assistant]
+      summary: >
+        Edit a pending draft before sending it. The edit is written to the stored draft row rather
+        than passed through the confirm call, which is what keeps the property that the payload
+        executed is exactly the payload the user reviewed. Validated against the stricter draft
+        schema, so a user cannot blank out the fields that make the record useful to staff.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: >
+                The full payload for this draft's action, in the same snake_case shape the
+                original REST endpoint accepts (create_ticket - name, description;
+                create_rma - order_id, reason, requested_action;
+                create_warranty - serial_number, issue_description).
+      responses:
+        "200": { description: OK }
+        "404": { description: Not found, or not the caller's draft (deliberately indistinguishable) }
+        "409": { description: Draft is no longer pending }
+
+  /assistant/drafts/{id}/confirm:
+    parameters: [{ $ref: "#/components/parameters/IdParam" }]
+    post:
+      operationId: confirmAssistantDraft
+      tags: [Assistant]
+      summary: >
+        Execute a drafted write action. This is the ONLY path in the assistant that creates data,
+        and it exists as a separate HTTP request on purpose (invariant I-5): the LLM prepares a
+        draft, the user clicks, this runs. A verbal "yes, send it" in the conversation cannot
+        reach here. Takes no request body -- the payload comes from the stored draft.
+
+        Six ordered checks run before anything is created: ownership, still-pending, not expired,
+        payload re-validated against the original endpoint's schema, the action's own permission
+        (ticket.create / rma.create / warranty.create, re-checked because a role can be revoked
+        between draft and confirm), then a conditional status claim that makes a double-click
+        produce one record rather than two.
+
+        On success the conversation transcript is attached to the resulting helpdesk ticket as its
+        first reply, so staff read the request together with the context that produced it. That
+        attachment is best-effort: the record already exists, so a failure there is logged, not
+        surfaced.
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  action: { type: string, enum: [create_ticket, create_rma, create_warranty] }
+                  result: { type: object, description: The created record as its own service returns it }
+                  label: { type: string, description: Human-readable reference, e.g. "#4242 Barang rusak" }
+                  deep_link: { type: string, description: Portal route to the created record }
+        "403": { description: Missing the action's own permission }
+        "404": { description: Not found, or not the caller's draft }
+        "409": { description: Already confirmed, cancelled, or being processed concurrently }
+        "410": { description: Draft expired (30 minutes after creation) }
+
+  /assistant/drafts/{id}/cancel:
+    parameters: [{ $ref: "#/components/parameters/IdParam" }]
+    post:
+      operationId: cancelAssistantDraft
+      tags: [Assistant]
+      summary: Discard a pending draft without executing it
+      responses:
+        "204": { description: Cancelled }
+        "404": { description: Not found, or not the caller's draft }
+        "409": { description: Draft is no longer pending }
+
+  /admin/assistant/settings:
+    get:
+      operationId: listAdminAssistantSettings
+      tags: [Assistant]
+      summary: >
+        Assistant settings rows (platform admin). The stored API key is never returned in any
+        form -- only has_api_key (boolean).
+      responses:
+        "200": { description: OK }
+        "403": { description: Platform admin access required }
+    put:
+      operationId: saveAdminAssistantSettings
+      tags: [Assistant]
+      summary: >
+        Create or update the settings row for one scope. odoo_connection_id null targets the
+        global row. api_key omitted means "leave unchanged"; null or empty string clears it.
+        Saving invalidates the config cache immediately rather than waiting out its 60s TTL.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                odoo_connection_id: { type: string, format: uuid, nullable: true }
+                provider: { type: string, enum: [ollama, gemini, claude] }
+                model: { type: string, maxLength: 120 }
+                base_url: { type: string, nullable: true }
+                api_key: { type: string, nullable: true }
+                temperature: { type: number, minimum: 0, maximum: 2 }
+                max_output_tokens: { type: integer, minimum: 64, maximum: 8192 }
+                max_tool_iterations: { type: integer, minimum: 1, maximum: 10 }
+                history_window: { type: integer, minimum: 2, maximum: 50 }
+                daily_message_quota: { type: integer, minimum: 1, maximum: 10000 }
+                burst_per_minute: { type: integer, minimum: 1, maximum: 60 }
+                default_locale: { type: string, enum: [id, en] }
+                enabled: { type: boolean }
+      responses:
+        "200": { description: OK }
+
+  /admin/assistant/provider-configs:
+    get:
+      operationId: listAdminAssistantProviderConfigs
+      tags: [Assistant]
+      summary: >
+        Konfigurasi Provider AI (My Account > Setting), one row per provider (claude/gemini/ollama),
+        platform admin only. Always returns all three providers, including ones never configured.
+        Stored keys are never returned in any form -- only has_api_key / has_api_key_cloud (boolean).
+      responses:
+        "200": { description: OK }
+        "403": { description: Platform admin access required }
+    put:
+      operationId: saveAdminAssistantProviderConfig
+      tags: [Assistant]
+      summary: >
+        Create or update the global config row for one provider. Separate from
+        PUT /admin/assistant/settings, which only stores the ACTIVE provider selector and
+        shared parameters (quota, temperature, ...) -- switching the active provider here does
+        NOT erase another provider's model/API key. api_key / api_key_cloud omitted means "leave
+        unchanged"; null or empty string clears it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider]
+              properties:
+                provider: { type: string, enum: [claude, gemini, ollama] }
+                model: { type: string, maxLength: 120, nullable: true }
+                api_key: { type: string, nullable: true }
+                base_url: { type: string, nullable: true }
+                ollama_target: { type: string, enum: [auto, local, cloud] }
+                ollama_model_manual: { type: string, maxLength: 120, nullable: true }
+                api_key_cloud: { type: string, nullable: true }
+                base_url_cloud: { type: string, nullable: true }
+      responses:
+        "200": { description: OK }
+        "403": { description: Platform admin access required }
+
+  /admin/assistant/provider-configs/{provider}/models:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        schema: { type: string, enum: [claude, gemini, ollama] }
+    get:
+      operationId: listAdminAssistantProviderModels
+      tags: [Assistant]
+      summary: Model ids selectable for one provider, asked of that provider itself
+      description: >
+        Backs the model dropdown on the "Konfigurasi Provider AI" page. The list comes from the
+        provider's own list-models endpoint using the stored credential (Gemini ListModels filtered
+        to models supporting generateContent, Anthropic /v1/models, Ollama /api/tags on the
+        configured base URL) and is cached 10 minutes per provider; `refresh=1` bypasses that cache.
+
+        Always 200, never an error, even when the provider cannot be reached: the body then carries
+        `source: "fallback"` with a short built-in list and a human-readable `warning` explaining
+        why (no API key stored, network failure, Ollama daemon down). An empty dropdown plus an
+        error page would tell the admin nothing actionable.
+
+        Carries its own burst limiter (20/minute per admin, `429 rate_limited`) because it makes an
+        outbound call -- and for Ollama, to a base URL the admin supplies.
+      parameters:
+        - name: refresh
+          in: query
+          schema: { type: string, enum: ["1", "true"] }
+          description: Skip the 10-minute cache and ask the provider again.
+      responses:
+        "200":
+          description: Model list (live or fallback -- check `source`)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  provider: { type: string, enum: [claude, gemini, ollama] }
+                  source:
+                    type: string
+                    enum: [provider, fallback]
+                    description: "`provider` = live from the provider; `fallback` = built-in list, possibly stale."
+                  fetched_at: { type: string, format: date-time }
+                  warning:
+                    type: string
+                    nullable: true
+                    description: Why the list is not live, or why it is empty. Shown verbatim in the UI.
+                  models:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, example: gemini-2.5-flash }
+                        label: { type: string, example: Gemini 2.5 Flash }
+                        note: { type: string, nullable: true, example: 1000K konteks }
+        "403": { description: Platform admin access required }
+        "404": { description: Unknown provider }
+        "429": { description: Too many model-list refreshes }
+
+  /admin/assistant/provider-configs/{provider}/test-connection:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        schema: { type: string, enum: [claude, gemini, ollama] }
+    post:
+      operationId: testAssistantProviderConnection
+      tags: [Assistant]
+      summary: Check that one provider is reachable, its credential works, and its configured model exists
+      description: >
+        Probes the provider through its list-models endpoint rather than a trial chat completion:
+        a chat call would spend tokens on a button meant to be pressed repeatedly, and it cannot
+        tell "wrong model id" apart from "wrong key" when it fails. The list call answers all
+        three questions at once.
+
+        `status` is one of `connected` (reachable, credential accepted, configured model present in
+        the provider's own list), `degraded` (reachable and authenticated, but no model configured
+        or the configured model is absent from that list), `error` (unreachable or credential
+        rejected), or `not_configured` (a cloud provider with no stored API key -- nothing to test;
+        any previously stored health is cleared so a stale green never outlives the key it
+        described).
+
+        The outcome is persisted to `assistant_provider_configs.health_status` /
+        `health_checked_at` / `health_error` / `health_latency_ms` (migration 0016) through a write
+        path that deliberately does NOT touch `updated_at`/`updated_by` -- a machine check must not
+        make the row look hand-edited. Shares the model-list burst limiter: both endpoints call the
+        same upstream.
+
+        Always 200 for a known provider, including when the result is `error` -- a failed
+        connection is a valid answer from a test button, not a failed request.
+      responses:
+        "200":
+          description: Probe finished; read `status` for the outcome
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [connected, degraded, error, not_configured] }
+                  message: { type: string, description: Human-readable result, shown verbatim in the UI }
+                  model: { type: string, nullable: true, description: The model id actually in effect (Ollama's manual override wins, matching runtime resolution) }
+                  latency_ms: { type: integer, nullable: true }
+                  model_count: { type: integer, nullable: true }
+                  config:
+                    type: object
+                    description: The provider config row after the health write; API keys are reported only as has_api_key / has_api_key_cloud booleans.
+        "403": { description: Platform admin access required }
+        "404": { description: Unknown provider }
+        "429": { description: Too many provider probes }
+
+  /admin/assistant/prompts:
+    get:
+      operationId: listAdminAssistantPrompts
+      tags: [Assistant]
+      summary: All prompt versions (platform admin), optionally filtered by key and locale
+      parameters:
+        - { name: key, in: query, schema: { type: string } }
+        - { name: locale, in: query, schema: { type: string } }
+      responses:
+        "200": { description: OK }
+    post:
+      operationId: createAdminAssistantPrompt
+      tags: [Assistant]
+      summary: >
+        Write a new prompt version. Always created inactive -- writing a prompt and putting it
+        live are two separate decisions, and merging them puts typos straight in front of customers.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key, locale, body]
+              properties:
+                key: { type: string, enum: [system, refusal, starters, ticket_intake] }
+                locale: { type: string, enum: [id, en] }
+                body: { type: string, minLength: 1, maxLength: 20000 }
+      responses:
+        "201": { description: Created (inactive) }
+
+  /admin/assistant/prompts/{id}/activate:
+    parameters: [{ $ref: "#/components/parameters/IdParam" }]
+    post:
+      operationId: activateAdminAssistantPrompt
+      tags: [Assistant]
+      summary: >
+        Make one version active for its (key, locale); rollback is activating an older version.
+        Takes effect on the next message -- promptBuilder reads the DB per message, uncached.
+      responses:
+        "200": { description: OK }
+        "404": { description: Prompt version not found }
+
+  /admin/assistant/tools:
+    get:
+      operationId: listAdminAssistantTools
+      tags: [Assistant]
+      summary: >
+        The code registry merged with any DB overrides, so tools added by a deploy are visible
+        before anyone writes a row for them.
+      parameters:
+        - { name: odoo_connection_id, in: query, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: OK }
+    put:
+      operationId: saveAdminAssistantTool
+      tags: [Assistant]
+      summary: Enable/disable a tool or override its permission and description for one scope
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tool_name, permission_code, enabled]
+              properties:
+                odoo_connection_id: { type: string, format: uuid, nullable: true }
+                tool_name: { type: string, maxLength: 60 }
+                permission_code: { type: string, maxLength: 60 }
+                description_override: { type: string, nullable: true, maxLength: 2000 }
+                enabled: { type: boolean }
+      responses:
+        "200": { description: OK }
+        "400": { description: Unknown tool name (not present in the code registry) }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    IdParam:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    PageParam:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    PageSizeParam:
+      name: page_size
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    OdooIdParam:
+      name: id
+      in: path
+      required: true
+      description: An Odoo record id (sale.order / account.move / stock.picking), not a portal UUID
+      schema: { type: integer, minimum: 1 }
+    AttachmentIdParam:
+      name: attachmentId
+      in: path
+      required: true
+      description: ir.attachment id in Odoo
+      schema: { type: integer, minimum: 1 }
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string, example: invalid_credentials }
+            message: { type: string }
+            details: { type: object, nullable: true }
+
+    PageMeta:
+      type: object
+      properties:
+        page: { type: integer }
+        page_size: { type: integer }
+        total: { type: integer }
+
+    UserStatus:
+      type: string
+      enum: [active, disabled, pending_verification]
+
+    PortalUser:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        name: { type: string }
+        status: { $ref: "#/components/schemas/UserStatus" }
+        two_factor_enabled: { type: boolean }
+        roles:
+          type: array
+          items: { type: string }
+          example: ["Finance"]
+        default_company_id: { type: string, format: uuid, nullable: true }
+        last_login_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    PortalUserCreate:
+      type: object
+      required: [email, name, odoo_connection_id, odoo_partner_id, role_ids]
+      properties:
+        email: { type: string, format: email }
+        name: { type: string }
+        odoo_connection_id:
+          type: string
+          format: uuid
+          description: Which Odoo connection odoo_partner_id belongs to (multi-Odoo, section 24)
+        odoo_partner_id:
+          type: integer
+          description: res.partner id in Odoo this user represents
+        role_ids:
+          type: array
+          items: { type: string, format: uuid }
+        company_ids:
+          type: array
+          items: { type: string, format: uuid }
+          description: Companies this user may access; first entry becomes the default
+
+    PortalUserCreated:
+      allOf:
+        - $ref: "#/components/schemas/PortalUser"
+        - type: object
+          properties:
+            activation_token:
+              type: string
+              description: One-time token for POST /auth/password/reset to set the initial password
+
+    PortalUserUpdate:
+      type: object
+      properties:
+        name: { type: string }
+        status: { $ref: "#/components/schemas/UserStatus" }
+        role_ids:
+          type: array
+          items: { type: string, format: uuid }
+
+    Permission:
+      type: object
+      properties:
+        code: { type: string, example: user.disable }
+        name: { type: string }
+        module: { type: string }
+
+    Role:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        status: { type: string, enum: [active, inactive] }
+        permissions:
+          type: array
+          items: { $ref: "#/components/schemas/Permission" }
+
+    Company:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        odoo_company_id: { type: integer }
+        name: { type: string, example: "PT ABC Indonesia" }
+        currency: { type: string, example: IDR }
+        is_active:
+          type: boolean
+          description: >
+            Whether this company was ticked in the connection's "Select Company" step. An inactive
+            company is still listed for the admin, but user provisioning will not default anyone
+            into it. Only returned by the /admin/odoo-connections/* company endpoints.
+        is_default: { type: boolean }
+        connection_name:
+          type: string
+          description: "Which Odoo connection this company belongs to (multi-Odoo, section 24) -- only returned by GET /companies"
+
+    CompanyProfile:
+      type: object
+      description: res.partner record for the authorized partner (CR section 10)
+      properties:
+        id: { type: integer }
+        name: { type: string, example: "AYU SENTOSA SEJAHTERA, PT" }
+        vat: { type: string, nullable: true }
+        email: { type: string, nullable: true }
+        phone: { type: string, nullable: true }
+        mobile: { type: string, nullable: true }
+        website: { type: string, nullable: true }
+        street: { type: string, nullable: true }
+        street2: { type: string, nullable: true }
+        city: { type: string, nullable: true }
+        state_id: { type: array, items: {}, example: [1, "DKI Jakarta"], nullable: true }
+        zip: { type: string, nullable: true }
+        country_id: { type: array, items: {}, example: [102, "Indonesia"], nullable: true }
+        industry_id: { type: array, items: {}, nullable: true }
+        category_id: { type: array, items: {}, nullable: true }
+
+    Address:
+      type: object
+      description: >
+        Either the authorized partner's own record (type "office") or a child res.partner with
+        type invoice/delivery/other (CR section 11)
+      properties:
+        id: { type: integer }
+        type: { type: string, enum: [office, invoice, delivery, other] }
+        name: { type: string, nullable: true }
+        street: { type: string, nullable: true }
+        street2: { type: string, nullable: true }
+        city: { type: string, nullable: true }
+        state_id: { type: array, items: {}, nullable: true }
+        zip: { type: string, nullable: true }
+        country_id: { type: array, items: {}, nullable: true }
+        phone: { type: string, nullable: true }
+        email: { type: string, nullable: true }
+
+    Contact:
+      type: object
+      description: A child res.partner with type=contact, i.e. a PIC (CR section 12)
+      properties:
+        id: { type: integer }
+        name: { type: string, example: "Aristya Rahadiyan" }
+        function: { type: string, nullable: true, description: "Job title / PIC role" }
+        email: { type: string, nullable: true }
+        phone: { type: string, nullable: true }
+        mobile: { type: string, nullable: true }
+
+    OdooConnection:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        url: { type: string, format: uri }
+        database: { type: string }
+        username: { type: string }
+        auth_type: { type: string, enum: [password, api_key] }
+        odoo_version: { type: string, nullable: true }
+        status: { type: string, enum: [pending, connected, error, disabled] }
+        is_enabled:
+          type: boolean
+          description: >
+            Whether the portal is allowed to use this connection (admin decision, set via
+            disable/enable). Orthogonal to `status`, which records what Odoo answered on the last
+            contact and is written automatically from real customer traffic -- `connected` +
+            `is_enabled: false` is a normal, meaningful combination.
+        last_checked_at: { type: string, format: date-time, nullable: true }
+
+    OdooConnectionCreate:
+      type: object
+      required: [name, url, database, username, auth_type, credential]
+      properties:
+        name: { type: string }
+        url: { type: string, format: uri }
+        database: { type: string }
+        username: { type: string }
+        auth_type: { type: string, enum: [password, api_key] }
+        credential:
+          type: string
+          format: password
+          description: Password or API key; write-only, encrypted at rest, never returned by the API
+        company_ids:
+          type: array
+          items: { type: integer }
+          description: >
+            res.company ids to activate ("Select Company"). Ids only -- names and currencies are
+            re-read from the Odoo that was just authenticated against, never taken from the client.
+            Omit to activate every company found.
+
+    OdooConnectionCheck:
+      type: object
+      required: [url, username]
+      properties:
+        url: { type: string, format: uri }
+        username: { type: string }
+        auth_type: { type: string, enum: [password, api_key] }
+        credential:
+          type: string
+          format: password
+          description: Required unless connection_id is given (then the stored credential is used)
+        database:
+          type: string
+          description: >
+            Optional. Left out, the database is discovered from the server; supply it when the
+            previous check answered `database_required`.
+        connection_id:
+          type: string
+          format: uuid
+          description: Re-check an existing connection; its stored credential is used when none is sent
+
+    OdooConnectionCheckResult:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [connected, database_required]
+          description: >
+            `connected` = Odoo accepted the credential. `database_required` = server reached, but
+            the database name must be supplied before anything can be authenticated.
+        odoo_version: { type: string, example: "18.0+e-20250908" }
+        database: { type: string, nullable: true, description: The database that was authenticated against }
+        databases:
+          type: array
+          nullable: true
+          items: { type: string }
+          description: Databases the server reports; null when it refuses to list them (list_db = False)
+        companies:
+          type: array
+          description: res.company records to choose from; empty unless status is 'connected'
+          items:
+            type: object
+            properties:
+              id: { type: integer }
+              name: { type: string }
+              currency: { type: string, nullable: true }
+
+    AuditLogEntry:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        actor_user_id: { type: string, format: uuid, nullable: true }
+        action: { type: string, example: user.create }
+        target_type: { type: string, nullable: true }
+        target_id: { type: string, nullable: true }
+        metadata: { type: object, nullable: true }
+        ip_address: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    LoginResult:
+      type: object
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        user: { $ref: "#/components/schemas/PortalUser" }
+
+    TwoFactorChallenge:
+      type: object
+      properties:
+        requires_2fa: { type: boolean, enum: [true] }
+        challenge_token: { type: string }
+
+    SalesOrder:
+      type: object
+      description: A sale.order -- used for both quotations (draft/sent) and confirmed orders (sale/done)
+      properties:
+        id: { type: integer }
+        name: { type: string, example: "S00123" }
+        date_order: { type: string, format: date-time }
+        amount_total: { type: number }
+        currency_id: { type: array, items: {}, example: [1, "IDR"] }
+        state: { type: string, enum: [draft, sent, sale, done, cancel] }
+        invoice_status: { type: string }
+        validity_date: { type: string, format: date, nullable: true }
+
+    OrderLine:
+      type: object
+      description: A sale.order.line row -- one product purchased on a quotation/order
+      properties:
+        id: { type: integer }
+        product_id: { type: array, items: {}, example: [17, "Air Conditioner Split Duct Daikin (2.600 CFM)"] }
+        name: { type: string }
+        product_uom_qty: { type: number }
+        product_uom: { type: array, items: {}, example: [1, "Units"] }
+        price_unit: { type: number }
+        price_subtotal: { type: number }
+        price_tax: { type: number }
+        price_total: { type: number }
+        tax_id: { type: array, items: { type: integer }, example: [19] }
+        taxes: { type: array, items: { type: string }, example: ["11%"], description: "tax_id resolved to display names" }
+
+    ChatterMessage:
+      type: object
+      description: A mail.message entry from a record's chatter thread (sale.order or helpdesk.ticket)
+      properties:
+        id: { type: integer }
+        author_id: { type: array, items: {}, example: [8, "Jane Customer"] }
+        body: { type: string, description: "HTML-formatted message body" }
+        date: { type: string, format: date-time }
+        message_type: { type: string, enum: [comment, notification, email] }
+
+    Invoice:
+      type: object
+      description: An account.move with move_type=out_invoice, state=posted
+      properties:
+        id: { type: integer }
+        name: { type: string, example: "INV/2026/00042" }
+        invoice_date: { type: string, format: date }
+        invoice_date_due: { type: string, format: date, nullable: true }
+        amount_total: { type: number }
+        amount_residual: { type: number }
+        currency_id: { type: array, items: {}, example: [1, "IDR"] }
+        state: { type: string }
+        payment_state: { type: string, enum: [not_paid, in_payment, paid, partial, reversed] }
+
+    OutstandingSummary:
+      type: object
+      properties:
+        total: { type: number }
+        count: { type: integer }
+        currency: { type: string, nullable: true }
+
+    PaymentProof:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        odoo_invoice_id: { type: integer }
+        original_filename: { type: string }
+        mime_type: { type: string }
+        amount: { type: number, nullable: true }
+        status: { type: string, enum: [pending, verified, rejected] }
+        reviewer_note: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    Delivery:
+      type: object
+      description: >
+        A stock.picking of the outgoing type. carrier_tracking_ref is deliberately not a field
+        here -- it only exists once the `delivery` app is installed, and Odoo's search_read
+        fails entirely if any requested field is invalid on the model. See GET
+        /deliveries/{id}/tracking, which fetches it separately and best-effort.
+      properties:
+        id: { type: integer }
+        name: { type: string, example: "WH/OUT/00123" }
+        scheduled_date: { type: string, format: date-time, nullable: true }
+        date_done: { type: string, format: date-time, nullable: true }
+        state: { type: string }
+        portal_status: { type: string, example: Shipped, description: "Odoo state mapped onto section 15's customer-facing labels" }
+        origin: { type: string, nullable: true }
+
+    DeliveryConfirmation:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        odoo_picking_id: { type: integer }
+        notes: { type: string, nullable: true }
+        odoo_synced_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Null means the confirmation note failed to push to Odoo -- the local record still stands
+        created_at: { type: string, format: date-time }
+
+    DocumentEntry:
+      type: object
+      description: An ir.attachment on a quotation/order/invoice/delivery the caller already owns
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        mimetype: { type: string, nullable: true }
+        create_date: { type: string, format: date-time }
+
+    CustomerRequest:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, enum: [request_product, request_quotation] }
+        payload: { type: object, additionalProperties: true }
+        status: { type: string, enum: [open, in_progress, closed] }
+        created_at: { type: string, format: date-time }
+
+    Notification:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, example: quotation.approved }
+        title: { type: string }
+        body: { type: string, nullable: true }
+        link: { type: string, nullable: true }
+        read_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    DashboardSummary:
+      type: object
+      properties:
+        quotations: { type: integer }
+        orders: { type: integer }
+        invoices: { type: integer }
+        tickets:
+          type: integer
+          nullable: true
+          description: Null if the current user lacks ticket.view (section 6 grants Helpdesk to Customer Admin only)
+        outstanding: { $ref: "#/components/schemas/OutstandingSummary" }
+
+    Product:
+      type: object
+      description: A sale_ok product.product available to the current company
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        default_code: { type: string, nullable: true, description: Internal reference / SKU }
+        list_price: { type: number }
+        qty_available: { type: number }
+        uom_id: { type: array, items: {}, example: [1, "Units"] }
+
+    PurchaseHistoryLine:
+      type: object
+      description: A sale.order.line from a past confirmed order
+      properties:
+        id: { type: integer }
+        product_id: { type: array, items: {}, example: [42, "Widget A"] }
+        product_uom_qty: { type: number }
+        price_unit: { type: number }
+        order_id: { type: array, items: {}, example: [123, "S00123"] }
+
+    Ticket:
+      type: object
+      description: A helpdesk.ticket
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        stage_id: { type: array, items: {}, example: [1, "New"] }
+        priority: { type: string }
+        team_id: { type: array, items: {}, example: [1, "Support"] }
+        user_id: { type: array, items: {}, nullable: true, example: [7, "Agent Name"] }
+        create_date: { type: string, format: date-time }
+
+    MaintenanceRequest:
+      type: object
+      description: A maintenance.request, scoped to the customer via the Studio field x_studio_customer
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        schedule_date: { type: string, format: date-time, nullable: true }
+        duration: { type: number, nullable: true, description: "Hours" }
+        maintenance_type: { type: string, enum: [corrective, preventive] }
+        priority: { type: string, description: "Odoo's 0-3 star priority widget" }
+        stage_id: { type: array, items: {}, nullable: true, example: [1, "New Request"] }
+        equipment_id: { type: array, items: {}, nullable: true, example: [4, "Forklift #2"] }
+        description: { type: string, nullable: true }
+        close_date: { type: string, format: date-time, nullable: true }
+
+    EquipmentUnit:
+      type: object
+      description: >
+        A maintenance.equipment L1 unit (or L2/L3 component when nested under `components`),
+        owned by the customer via a field added by the `installed_base` Odoo addon -- see CR
+        Docs/CR/customer_population_installed_base.md section 6 and Docs/ops/odoo_studio_installed_base.md
+        for why this is real addon fields rather than Odoo Studio fields.
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        serial_number: { type: string, nullable: true }
+        model:
+          type: object
+          nullable: true
+          description: The product.product this unit's SKU is, the join key to the service catalog
+          properties:
+            product_id: { type: integer }
+            name: { type: string }
+        category:
+          type: object
+          nullable: true
+          properties:
+            id: { type: integer }
+            name: { type: string }
+        install_date: { type: string, format: date, nullable: true }
+        warranty_end: { type: string, format: date, nullable: true }
+        location: { type: string, nullable: true }
+        status: { type: string, nullable: true, enum: [active, idle, decommissioned] }
+        runtime_hours: { type: number, nullable: true }
+        components:
+          type: array
+          description: Only present on GET /equipment/{id}. L2/L3 child equipment (CR Fase 3).
+          items: { $ref: "#/components/schemas/EquipmentUnit" }
+
+    DueReplacementRow:
+      type: object
+      description: >
+        One deterministic recommendation (CR section 9). basis/attribution/attribution_note are
+        never omitted (IB-4) -- a due date without a stated origin is never shown.
+      properties:
+        equipment_id: { type: integer }
+        equipment_name: { type: string }
+        part:
+          type: object
+          properties:
+            product_id: { type: integer }
+            name: { type: string }
+        status: { type: string, enum: [overdue, due_soon, ok] }
+        due_date: { type: string, format: date }
+        days_overdue: { type: integer, nullable: true, description: "Only set when status=overdue" }
+        basis: { type: string, enum: [last_purchase, install_date] }
+        basis_date: { type: string, format: date }
+        attribution:
+          type: string
+          enum: [unit, fleet_estimated]
+          description: "'fleet_estimated' when the purchase can't be traced to one of several identical units (D-5)"
+        attribution_note: { type: string, nullable: true }
+        upgrade:
+          type: object
+          nullable: true
+          description: Supersession path (CR benefit #2) -- present when this part has a recommended replacement
+          properties:
+            product_id: { type: integer }
+            name: { type: string }
+            note: { type: string, nullable: true }
+
+    EquipmentServiceHistoryEntry:
+      type: object
+      description: A maintenance.request tied to this unit or one of its components
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        schedule_date: { type: string, format: date-time, nullable: true }
+        stage: { type: string, nullable: true }
+        maintenance_type: { type: string, nullable: true, enum: [corrective, preventive] }
+        close_date: { type: string, format: date, nullable: true }
+        equipment_id: { type: integer, nullable: true }
+        equipment_name: { type: string, nullable: true }
+
+    EquipmentCorrection:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        odoo_equipment_id: { type: integer }
+        correction_type: { type: string, enum: [location, status, runtime_hours, ownership, other] }
+        proposed_value: { type: string }
+        note: { type: string, nullable: true }
+        ticket_id: { type: integer, description: Linked helpdesk.ticket id }
+        status:
+          type: string
+          nullable: true
+          description: The linked ticket's current stage name, read live from Odoo
+        created_at: { type: string, format: date-time }
+
+    RmaRequest:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        odoo_order_id: { type: integer, nullable: true }
+        reason: { type: string }
+        requested_action: { type: string, enum: [refund, replacement] }
+        ticket_id: { type: integer, description: Linked helpdesk.ticket id }
+        status:
+          type: string
+          nullable: true
+          description: The linked ticket's current stage name, read live from Odoo
+        created_at: { type: string, format: date-time }
+
+    WarrantyClaim:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        serial_number: { type: string }
+        issue_description: { type: string }
+        ticket_id: { type: integer, description: Linked helpdesk.ticket id }
+        status:
+          type: string
+          nullable: true
+          description: The linked ticket's current stage name, read live from Odoo
+        created_at: { type: string, format: date-time }
+
+    Subscription:
+      type: object
+      description: A sale.order with is_subscription=true
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        amount_total: { type: number }
+        currency_id: { type: array, items: {}, example: [1, "IDR"] }
+        state: { type: string }
+        subscription_state: { type: string, description: Odoo 17/18 subscription lifecycle code }
+        start_date: { type: string, format: date, nullable: true }
+        next_invoice_date: { type: string, format: date, nullable: true }
+        end_date: { type: string, format: date, nullable: true }
+
+    TrendPoint:
+      type: object
+      description: One read_group bucket from Odoo -- month is a display label ("April 2026"), not an ISO date
+      properties:
+        month: { type: string, example: "April 2026" }
+        total: { type: number }
+
+    ReorderSuggestion:
+      type: object
+      properties:
+        product_id: { type: integer }
+        product_name: { type: string }
+        order_count: { type: integer, description: How many past orders included this product }
+        total_qty: { type: number }

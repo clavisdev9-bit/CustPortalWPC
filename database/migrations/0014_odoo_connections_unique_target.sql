@@ -1,0 +1,41 @@
+-- BUG-30 (resolution.md): dua baris odoo_connections yang menunjuk Odoo + database + user yang
+-- SAMA adalah duplikat, dan duplikat itulah yang membuat sebuah koneksi rusak bisa bertahan
+-- berhari-hari sambil terasa "sudah diperbaiki": kredensial yang benar mendarat di baris BARU,
+-- sementara baris lama -- beserta seluruh identity_mappings yang menempel padanya -- tetap
+-- memegang kredensial basi. Pelanggan yang terpetakan ke baris lama tetap terkunci total.
+--
+-- Index ini SENGAJA non-unique, dan itu bukan penyederhanaan sementara. Versi pertama migrasi ini
+-- mencoba pintar: unique kalau data bersih, non-unique + RAISE WARNING kalau masih ada duplikat,
+-- "jalankan ulang setelah dikonsolidasikan". Itu janji yang tidak bisa ditepati -- scripts/
+-- migrate.js mencatat nama file yang sudah sukses ke schema_migrations dan melewatinya selamanya,
+-- jadi lingkungan yang punya duplikat pada hari migrasi ini dijalankan TIDAK AKAN PERNAH
+-- mendapatkan index unique-nya. Lebih baik satu index yang jujur daripada dua cabang yang salah
+-- satunya berbohong.
+--
+-- Jadi pembagian tugasnya eksplisit:
+--   * Pencegahan  -> odooConnectionService.create()/update() (409 connection_already_exists),
+--                    dengan pesan yang menyebut nama koneksi yang sudah ada.
+--   * Index ini   -> membuat findByTarget() murah, karena kini ia dipanggil pada setiap create
+--                    dan setiap edit yang memindahkan target.
+--   * Sisa risiko -> guard aplikasi membaca SEBELUM dua panggilan Odoo yang lambat, jadi dua
+--                    penyimpanan yang benar-benar bersamaan (dobel-klik Simpan, atau dua admin)
+--                    masih bisa lolos. Ditutup dengan menaikkan index ini jadi UNIQUE, yang hanya
+--                    mungkin setelah duplikat yang sudah terlanjur ada dikonsolidasikan:
+--
+--     -- 1. periksa dulu:
+--     SELECT lower(rtrim(url,'/')) u, database, lower(username) un, count(*), array_agg(name)
+--       FROM odoo_connections GROUP BY 1,2,3 HAVING count(*) > 1;
+--     -- 2. pindahkan identity_mappings + odoo_companies ke baris yang dipertahankan, hapus
+--     --    baris yang lain, lalu:
+--     CREATE UNIQUE INDEX ux_odoo_connections_target
+--       ON odoo_connections (lower(rtrim(url, '/')), database, lower(username));
+--
+--   odooConnectionRepository.create() sudah menangani 23505 dan mengubahnya jadi 409 yang sama,
+--   jadi menaikkan index itu tidak butuh perubahan kode apa pun.
+--
+-- Normalisasinya wajib identik dengan odooConnectionRepository.findByTarget(): trailing slash dan
+-- kapitalisasi URL diabaikan (".../" dan "..." adalah Odoo yang sama), username di-lower (login
+-- Odoo praktis selalu email), tapi nama database TIDAK -- di Postgres nama database memang
+-- case-sensitive. Kalau salah satu sisi diubah, ubah keduanya.
+CREATE INDEX IF NOT EXISTS ix_odoo_connections_target
+  ON odoo_connections (lower(rtrim(url, '/')), database, lower(username));
