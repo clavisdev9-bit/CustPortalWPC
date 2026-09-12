@@ -49,6 +49,10 @@ const NAV_SECTIONS = [
       // in-memory mock dataset (no Odoo/backend behind it yet) -- no `feature` gate, since there's
       // no capability to check against.
       { label: 'Shipment Tracking', to: '/shipment-tracking' },
+      // Docs/CR/customer_portal_vessel_schedule.md, Fase 0-P: same situation as Shipment Tracking
+      // above -- in-memory mock only, no `feature` gate (the `freight_schedule` Odoo addon this
+      // would eventually read from doesn't exist yet, so there's no capability to check).
+      { label: 'Vessel Schedule', to: '/vessel-schedule' },
     ],
   },
   {
@@ -106,6 +110,7 @@ const ICON_PATHS = {
   Outstanding: <><rect x="2" y="5" width="20" height="14" rx="2" /><path d="M2 10h20" /></>,
   Deliveries: <><path d="M1 3h13v13H1z" /><path d="M14 8h5l3 3v5h-8z" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="19" r="2" /></>,
   'Shipment Tracking': <><path d="M2 12h5l2-6h6l2 6h5" /><path d="M4 12v5h16v-5" /><circle cx="8" cy="19" r="1.6" /><circle cx="16" cy="19" r="1.6" /></>,
+  'Vessel Schedule': <><path d="M3 21c2-1 4-1 6 0s4 1 6 0 4-1 6 0" /><path d="M5 17l1-8h12l1 8" /><path d="M9 9V4h4l3 5" /></>,
   Warranty: <><path d="M12 3l8 3v6c0 4.5-3.2 7.7-8 9-4.8-1.3-8-4.5-8-9V6z" /><path d="M9 12l2 2 4-4" /></>,
   Complaint: <><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /><path d="M12 7v4M12 14h.01" /></>,
   'Schedule Maintenance': <><rect x="3" y="4" width="18" height="17" rx="2" /><path d="M3 9h18M8 2v4M16 2v4" /><path d="M8 14h1M12 14h1M16 14h1M8 17h1M12 17h1" /></>,

@@ -5,6 +5,7 @@ import { listProducts } from '../api/products';
 import StatusBadge from '../components/StatusBadge';
 import EmptyState from '../components/EmptyState';
 import TableSkeleton from '../components/TableSkeleton';
+import ProductCombobox from '../components/ProductCombobox';
 
 function describeItems(r) {
   if (r.type !== 'request_quotation' || !Array.isArray(r.payload?.lines)) return null;
@@ -21,8 +22,8 @@ export default function RequestsPage() {
 
   const [products, setProducts] = useState([]);
   const [productsError, setProductsError] = useState(null);
-  const [productFilter, setProductFilter] = useState('');
-  const [pickProductId, setPickProductId] = useState('');
+  const [productsLoading, setProductsLoading] = useState(true);
+  const [pickProduct, setPickProduct] = useState(null); // objek produk, bukan id string
   const [pickQty, setPickQty] = useState('1');
   const [lines, setLines] = useState([]);
   const [quotationNote, setQuotationNote] = useState('');
@@ -44,49 +45,50 @@ export default function RequestsPage() {
     refresh();
     listProducts()
       .then(setProducts)
-      .catch((err) => setProductsError(err.message));
+      .catch((err) => setProductsError(err.message))
+      .finally(() => setProductsLoading(false));
   }, []);
 
-  const filteredProducts = useMemo(() => {
-    const q = productFilter.trim().toLowerCase();
-    if (!q) return products;
-    // Odoo's XML-RPC represents an empty Char field as `false`, not `''`/null -- default_code is
-    // routinely false for products with no internal reference set, so `?.` alone isn't enough
-    // (false?.toLowerCase() still throws, since `?.` only guards null/undefined).
-    return products.filter((p) => {
-      const name = typeof p.name === 'string' ? p.name.toLowerCase() : '';
-      const code = typeof p.default_code === 'string' ? p.default_code.toLowerCase() : '';
-      return name.includes(q) || code.includes(q);
-    });
-  }, [products, productFilter]);
+  const existingIds = useMemo(() => new Set(lines.map((l) => l.product_id)), [lines]);
 
   const estimatedTotal = useMemo(
-    () => lines.reduce((sum, l) => sum + l.qty * (l.list_price || 0), 0),
+    () => lines.reduce((sum, l) => sum + (Number(l.qty) || 0) * (Number(l.list_price) || 0), 0),
     [lines]
   );
 
   function handleAddLine() {
-    const product = products.find((p) => String(p.id) === pickProductId);
     const qty = Number(pickQty);
-    if (!product || !(qty > 0)) return;
+    // INV-1: hanya objek produk dari katalog yang boleh jadi baris. Tidak ada jalur di mana
+    // ketikan bebas berakhir sebagai sale.order.line.
+    if (!pickProduct || !(qty > 0)) return;
     setLines((prev) => {
-      const existing = prev.find((l) => l.product_id === product.id);
+      const existing = prev.find((l) => l.product_id === pickProduct.id);
       if (existing) {
-        return prev.map((l) => (l.product_id === product.id ? { ...l, qty: l.qty + qty } : l));
+        // D-6 membuat qty baris bisa jadi string (diketik langsung di tabel) -- `+` di sini
+        // tanpa Number() akan menyambung teks ("2" + 3 -> "23") alih-alih menjumlah.
+        return prev.map((l) => (l.product_id === pickProduct.id ? { ...l, qty: (Number(l.qty) || 0) + qty } : l));
       }
       return [
         ...prev,
         {
-          product_id: product.id,
-          product_name: product.name,
-          default_code: product.default_code || undefined,
+          product_id: pickProduct.id,
+          product_name: pickProduct.name,
+          default_code: pickProduct.default_code || undefined,
           qty,
-          list_price: product.list_price || 0,
+          list_price: pickProduct.list_price || 0,
         },
       ];
     });
-    setPickProductId('');
+    setPickProduct(null);
     setPickQty('1');
+  }
+
+  function handleRequestUncataloged(q) {
+    // Portal tidak boleh membuat product.product di Odoo. Yang bisa dilakukan di sini persis
+    // jalur yang sudah ada: catat permintaannya sebagai request_product supaya Sales menindak.
+    setType('request_product');
+    setProductNote((prev) => (prev.trim() ? prev : q));
+    setPickProduct(null);
   }
 
   function handleRemoveLine(productId) {
@@ -106,7 +108,7 @@ export default function RequestsPage() {
               product_id,
               product_name,
               default_code,
-              qty,
+              qty: Number(qty),
             })),
             note: quotationNote.trim() || undefined,
           },
@@ -126,7 +128,9 @@ export default function RequestsPage() {
   }
 
   const canSubmit =
-    type === 'request_quotation' ? lines.length > 0 : productNote.trim().length > 0;
+    type === 'request_quotation'
+      ? lines.length > 0 && lines.every((l) => Number(l.qty) > 0)
+      : productNote.trim().length > 0;
 
   return (
     <div className="requests-page">
@@ -155,26 +159,18 @@ export default function RequestsPage() {
             {productsError && <p className="error">Could not load product catalog: {productsError}</p>}
 
             <div className="line-item-picker">
-              <label style={{ flex: '1 1 260px' }}>
-                Filter products
-                <input
-                  type="text"
-                  placeholder="Search by name or code..."
-                  value={productFilter}
-                  onChange={(e) => setProductFilter(e.target.value)}
-                />
-              </label>
-              <label style={{ flex: '2 1 320px' }}>
+              <label style={{ flex: '3 1 380px' }} htmlFor="quotation-product">
                 Product
-                <select value={pickProductId} onChange={(e) => setPickProductId(e.target.value)}>
-                  <option value="">Select a product...</option>
-                  {filteredProducts.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.default_code ? `[${p.default_code}] ` : ''}
-                      {p.name} -- {p.list_price?.toLocaleString()}
-                    </option>
-                  ))}
-                </select>
+                <ProductCombobox
+                  inputId="quotation-product"
+                  products={products}
+                  value={pickProduct}
+                  onChange={setPickProduct}
+                  onRequestUncataloged={handleRequestUncataloged}
+                  existingIds={existingIds}
+                  loading={productsLoading}
+                  disabled={Boolean(productsError)}
+                />
               </label>
               <label style={{ flex: '0 1 110px' }}>
                 Qty
@@ -184,9 +180,11 @@ export default function RequestsPage() {
                   step="any"
                   value={pickQty}
                   onChange={(e) => setPickQty(e.target.value)}
+                  // M-5: tanpa ini, Enter di sini mengirim seluruh request quotation lebih awal.
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddLine(); } }}
                 />
               </label>
-              <button type="button" onClick={handleAddLine} disabled={!pickProductId || !(Number(pickQty) > 0)}>
+              <button type="button" onClick={handleAddLine} disabled={!pickProduct || !(Number(pickQty) > 0)}>
                 Add line
               </button>
             </div>
@@ -212,9 +210,16 @@ export default function RequestsPage() {
                           {l.default_code ? `[${l.default_code}] ` : ''}
                           {l.product_name}
                         </td>
-                        <td className="num">{l.qty}</td>
+                        <td data-label="Qty" className="num">
+                          <input
+                            type="number" min="0.01" step="any" className="line-qty-input"
+                            value={l.qty}
+                            onChange={(e) => setLines((prev) => prev.map((x) =>
+                              x.product_id === l.product_id ? { ...x, qty: e.target.value } : x))}
+                          />
+                        </td>
                         <td className="num">{l.list_price?.toLocaleString()}</td>
-                        <td className="num">{(l.qty * (l.list_price || 0)).toLocaleString()}</td>
+                        <td className="num">{((Number(l.qty) || 0) * (l.list_price || 0)).toLocaleString()}</td>
                         <td>
                           <button type="button" onClick={() => handleRemoveLine(l.product_id)}>
                             Remove

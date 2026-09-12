@@ -18,6 +18,8 @@ import InvoicesPage from './pages/InvoicesPage';
 import DeliveriesPage from './pages/DeliveriesPage';
 import ShipmentTrackingPage from './pages/ShipmentTrackingPage';
 import ShipmentDetailPage from './pages/ShipmentDetailPage';
+import VesselSchedulePage from './pages/VesselSchedulePage';
+import VesselScheduleDetailPage from './pages/VesselScheduleDetailPage';
 import RequestsPage from './pages/RequestsPage';
 import DocumentsPage from './pages/DocumentsPage';
 import ProductsPage from './pages/ProductsPage';
@@ -73,6 +75,11 @@ function AppRoutes() {
             in-memory mock dataset, no backend involved -- see ShipmentTrackingPage.jsx header. */}
         <Route path="shipment-tracking" element={<ShipmentTrackingPage />} />
         <Route path="shipment-tracking/:id" element={<ShipmentDetailPage />} />
+        {/* Docs/CR/customer_portal_vessel_schedule.md, Fase 0-P: clickable prototype over an
+            in-memory mock (freight_schedule addon doesn't exist in Odoo yet) -- see
+            VesselSchedulePage.jsx header. */}
+        <Route path="vessel-schedule" element={<VesselSchedulePage />} />
+        <Route path="vessel-schedule/:id" element={<VesselScheduleDetailPage />} />
         <Route path="requests" element={<RequestsPage />} />
         <Route path="documents" element={<DocumentsPage />} />
         <Route path="products" element={<ProductsPage />} />
