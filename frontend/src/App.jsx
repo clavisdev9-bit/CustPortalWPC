@@ -20,6 +20,7 @@ import ShipmentTrackingPage from './pages/ShipmentTrackingPage';
 import ShipmentDetailPage from './pages/ShipmentDetailPage';
 import VesselSchedulePage from './pages/VesselSchedulePage';
 import VesselScheduleDetailPage from './pages/VesselScheduleDetailPage';
+import LclCapacityPage from './pages/LclCapacityPage';
 import RequestsPage from './pages/RequestsPage';
 import DocumentsPage from './pages/DocumentsPage';
 import ProductsPage from './pages/ProductsPage';
@@ -80,6 +81,9 @@ function AppRoutes() {
             VesselSchedulePage.jsx header. */}
         <Route path="vessel-schedule" element={<VesselSchedulePage />} />
         <Route path="vessel-schedule/:id" element={<VesselScheduleDetailPage />} />
+        {/* Portal WPC group (freight-forwarding blueprint attachment): clickable prototype over an
+            in-memory mock, no backend involved -- see LclCapacityPage.jsx header. */}
+        <Route path="lcl-capacity" element={<LclCapacityPage />} />
         <Route path="requests" element={<RequestsPage />} />
         <Route path="documents" element={<DocumentsPage />} />
         <Route path="products" element={<ProductsPage />} />

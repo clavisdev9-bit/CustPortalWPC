@@ -56,6 +56,18 @@ const NAV_SECTIONS = [
     ],
   },
   {
+    // Freight-forwarding blueprint attachment (§6 arsitektur: Shipment Data / Sea-Air, Vessel-
+    // Flight schedule, Capacity/LCL). Added as its own group rather than folded into "Delivery"
+    // so the existing Delivery menu stays exactly as-is; the two prototype pages below are also
+    // still reachable from Delivery, this just gives them a dedicated, purpose-named home too.
+    label: 'Portal WPC',
+    children: [
+      { label: 'Shipment Tracking', to: '/shipment-tracking' },
+      { label: 'Vessel Schedule', to: '/vessel-schedule' },
+      { label: 'LCL Capacity', to: '/lcl-capacity' },
+    ],
+  },
+  {
     label: 'After Sales',
     children: [
       { label: 'Warranty', to: '/warranty' },
@@ -111,6 +123,7 @@ const ICON_PATHS = {
   Deliveries: <><path d="M1 3h13v13H1z" /><path d="M14 8h5l3 3v5h-8z" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="19" r="2" /></>,
   'Shipment Tracking': <><path d="M2 12h5l2-6h6l2 6h5" /><path d="M4 12v5h16v-5" /><circle cx="8" cy="19" r="1.6" /><circle cx="16" cy="19" r="1.6" /></>,
   'Vessel Schedule': <><path d="M3 21c2-1 4-1 6 0s4 1 6 0 4-1 6 0" /><path d="M5 17l1-8h12l1 8" /><path d="M9 9V4h4l3 5" /></>,
+  'LCL Capacity': <><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 15h11M14 15v6M3 3l11 12" /></>,
   Warranty: <><path d="M12 3l8 3v6c0 4.5-3.2 7.7-8 9-4.8-1.3-8-4.5-8-9V6z" /><path d="M9 12l2 2 4-4" /></>,
   Complaint: <><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /><path d="M12 7v4M12 14h.01" /></>,
   'Schedule Maintenance': <><rect x="3" y="4" width="18" height="17" rx="2" /><path d="M3 9h18M8 2v4M16 2v4" /><path d="M8 14h1M12 14h1M16 14h1M8 17h1M12 17h1" /></>,
