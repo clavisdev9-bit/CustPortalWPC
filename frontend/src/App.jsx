@@ -21,6 +21,7 @@ import ShipmentDetailPage from './pages/ShipmentDetailPage';
 import VesselSchedulePage from './pages/VesselSchedulePage';
 import VesselScheduleDetailPage from './pages/VesselScheduleDetailPage';
 import LclCapacityPage from './pages/LclCapacityPage';
+import AirSchedulePage from './pages/AirSchedulePage';
 import RequestsPage from './pages/RequestsPage';
 import DocumentsPage from './pages/DocumentsPage';
 import ProductsPage from './pages/ProductsPage';
@@ -84,6 +85,11 @@ function AppRoutes() {
         {/* Portal WPC group (freight-forwarding blueprint attachment): clickable prototype over an
             in-memory mock, no backend involved -- see LclCapacityPage.jsx header. */}
         <Route path="lcl-capacity" element={<LclCapacityPage />} />
+        {/* Docs/CR/air_schedule.md, Fase 0: same situation as Vessel Schedule above -- in-memory
+            mock only, no `freight_schedule` addon extension to read from yet. Staff-only per
+            D-4/AS-7 -- see AirSchedulePage.jsx header; the nav entry (AppShell.jsx) is likewise
+            hidden from customer roles, not just this route. */}
+        <Route path="air-schedule" element={<AirSchedulePage />} />
         <Route path="requests" element={<RequestsPage />} />
         <Route path="documents" element={<DocumentsPage />} />
         <Route path="products" element={<ProductsPage />} />

@@ -1475,6 +1475,8 @@ a.kpi { text-decoration: none; color: inherit; cursor: pointer; }
 }
 .modal {
   width: min(460px, 100%);
+  max-height: min(640px, 90vh);
+  overflow-y: auto;
   padding: var(--s-5);
   border-radius: var(--radius-lg);
   background: var(--color-surface);
@@ -1772,3 +1774,54 @@ button.timeline__row:hover { transform: none; box-shadow: none; filter: none; }
 /* share modal extras -- base .modal-overlay/.modal/.modal__title/.modal__actions are from CR-049 above */
 .modal__link-row { display: flex; gap: var(--s-2); margin: var(--s-4) 0; }
 .modal__link-row input { flex: 1; font-family: var(--font-mono); font-size: 0.78rem; color: var(--color-muted); }
+
+/* Air Cargo Schedule (Docs/CR/air_schedule.md) -- two-panel staff console: flight board (left,
+   scrollable card list) + selected-flight detail (right, capacity + assigned/unassigned bookings).
+   Reuses .card/.table-wrap/.pill/.kpi-grid/.vessel-toolbar/.modal* from elsewhere in this file;
+   only the board cards and capacity gauges are new shapes. */
+.air-schedule-layout { display: flex; gap: var(--s-5); align-items: flex-start; padding: var(--s-2) var(--s-5) var(--s-5); }
+.air-schedule-board {
+  flex: 0 0 340px;
+  display: flex; flex-direction: column; gap: var(--s-3);
+  max-height: 70vh; overflow-y: auto; padding-right: var(--s-1);
+}
+.air-schedule-panel { flex: 1 1 480px; min-width: 0; display: flex; flex-direction: column; gap: var(--s-4); }
+
+.air-schedule-flight-card {
+  display: flex; flex-direction: column; gap: var(--s-2);
+  text-align: left; width: 100%;
+  padding: var(--s-4); border-radius: var(--radius); border: 1px solid var(--color-border);
+  background: var(--color-surface); cursor: pointer; font: inherit; color: inherit;
+  transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
+}
+.air-schedule-flight-card:hover { border-color: var(--color-border-strong); box-shadow: var(--shadow-sm); }
+.air-schedule-flight-card.is-selected {
+  border-color: var(--color-primary); background: var(--color-primary-tint);
+  box-shadow: var(--shadow-md);
+}
+.air-schedule-flight-card__head { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); }
+.air-schedule-flight-card__no { font-weight: 700; font-family: var(--font-display); }
+.air-schedule-flight-card__route { font-size: 0.95rem; font-weight: 600; }
+
+.air-schedule-gauge { display: flex; flex-direction: column; gap: 2px; }
+.air-schedule-gauge__head { display: flex; align-items: center; justify-content: space-between; font-size: 0.78rem; color: var(--color-muted); }
+.air-schedule-gauge__value--over { color: var(--color-danger); font-weight: 600; }
+.air-schedule-gauge__track {
+  height: 6px; border-radius: var(--radius-full); background: var(--color-surface-inset);
+  overflow: hidden;
+}
+.air-schedule-gauge__fill { height: 100%; border-radius: var(--radius-full); background: var(--color-primary); }
+.air-schedule-gauge__fill--over { background: var(--color-danger); }
+
+.air-schedule-panel__head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s-3); }
+.air-schedule-panel__section-head {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--s-3);
+  margin: var(--s-5) 0 var(--s-3);
+}
+.air-schedule-panel__section-head h3 { margin: 0; }
+tr.air-schedule-pool-row--match { background: var(--color-primary-tint); }
+
+@media (max-width: 900px) {
+  .air-schedule-layout { flex-direction: column; padding: var(--s-2) var(--s-4) var(--s-4); }
+  .air-schedule-board { flex: 1 1 auto; max-height: none; }
+}

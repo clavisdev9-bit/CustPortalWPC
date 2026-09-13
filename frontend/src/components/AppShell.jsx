@@ -107,6 +107,13 @@ const NAV_SECTIONS = [
 // backend), bukan Customer Admin.
 const PLATFORM_ADMIN_SECTIONS = [{ label: 'Asisten Portal', to: '/admin/assistant' }];
 
+// Docs/CR/air_schedule.md D-4/AS-7: Air Cargo Schedule is a STAFF console, not a customer feature
+// -- it deliberately does NOT live inside the Delivery group (or any other customer nav group)
+// alongside Deliveries/Shipment Tracking/Vessel Schedule, because that would suggest customers can
+// see it too. Rendered as its own section, gated the same way SharePanel is gated in
+// DocumentsPage.jsx (`canShare`): 'Staff (Internal)' role or platform admin, nothing else.
+const STAFF_SECTIONS = [{ label: 'Air Cargo Schedule', to: '/air-schedule' }];
+
 // Line icons (stroke = currentColor). Keyed by nav label; anything unmapped gets a neutral dot.
 const ICON_PATHS = {
   Dashboard: <><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></>,
@@ -137,6 +144,7 @@ const ICON_PATHS = {
   Messages: <><path d="M4 4h16v12H8l-4 4z" /></>,
   Notifications: <><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.7 21a2 2 0 0 1-3.4 0" /></>,
   'Asisten Portal': <><path d="M4 4h16v12H8l-4 4z" /><path d="M9 10h.01M12 10h.01M15 10h.01" /></>,
+  'Air Cargo Schedule': <><path d="M2.5 19l19-7-19-7 4 7z" /><path d="M6.5 12H21" /></>,
   Setting: <><line x1="4" y1="6" x2="20" y2="6" /><circle cx="9" cy="6" r="2" /><line x1="4" y1="12" x2="20" y2="12" /><circle cx="15" cy="12" r="2" /><line x1="4" y1="18" x2="20" y2="18" /><circle cx="9" cy="18" r="2" /></>,
   'Konfigurasi Provider AI': <><rect x="4" y="4" width="16" height="16" rx="3" /><path d="M8 9h8M8 13h5" /><circle cx="17" cy="15.5" r="1.4" /></>,
 };
@@ -176,6 +184,11 @@ function initials(name) {
 
 export default function AppShell() {
   const { user, logout } = useAuth();
+  // Same gate as SharePanel's `canShare` in DocumentsPage.jsx -- deliberately role-based, not
+  // `feature`-based: `feature` only hides menus whose Odoo module isn't installed, it says nothing
+  // about who is allowed to use them (D-4/AS-7, Docs/CR/air_schedule.md).
+  const isStaff = !!user?.is_platform_admin
+    || (Array.isArray(user?.roles) && user.roles.includes('Staff (Internal)'));
   const [navOpen, setNavOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(() => {
@@ -254,7 +267,7 @@ export default function AppShell() {
           </span>
         </div>
         <nav onClick={() => setNavOpen(false)}>
-          {[...NAV_SECTIONS, ...(user?.is_platform_admin ? PLATFORM_ADMIN_SECTIONS : [])]
+          {[...NAV_SECTIONS, ...(isStaff ? STAFF_SECTIONS : []), ...(user?.is_platform_admin ? PLATFORM_ADMIN_SECTIONS : [])]
             .map((section) => {
               // "Setting > Koneksi Odoo" and "Konfigurasi Provider AI" are both platform-admin
               // only (backend: requirePlatformAdmin on /admin/odoo-connections and
